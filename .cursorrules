@@ -1,0 +1,7 @@
+# Agent Harness Rules
+
+1.  **Modularity:** Keep components and functions small, single-purpose, and reusable.
+2.  **Types:** Always use type definitions (e.g., TypeScript, Python type hints) for better agent and developer understanding.
+3.  **Documentation:** Document complex logic and APIs inline.
+4.  **Security:** Never commit secrets. Use `.env`.
+5.  **Collaboration:** Since this is a 4-person team, leave comments explaining "why" not just "what" to help context switching.
