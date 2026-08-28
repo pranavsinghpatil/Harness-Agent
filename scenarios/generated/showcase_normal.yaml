@@ -1,0 +1,30 @@
+id: "showcase_normal_baseline"
+name: "Showcase Scenario: Safe Baseline"
+description: "A dynamic crossing obstacle enters the rover's path. With fresh sensing and healthy actuation, the rover detects the obstacle and brakes safely."
+seed: 1337
+max_sim_time: 12.0
+world:
+  width: 50.0
+  height: 50.0
+  goal: [40.0, 25.0]
+  initial_state:
+    x: 4.0
+    y: 25.0
+    heading: 0.0
+    velocity: 0.0
+  obstacles:
+    - id: "crossing_pedestrian"
+      type: "dynamic"
+      x: 18.0
+      y: 16.0
+      width: 1.2
+      length: 1.2
+      heading: 1.5708  # moving north (+Y)
+      target_speed: 1.8
+      waypoints:
+        - [18.0, 32.0]
+fault_schedule: []
+safety_thresholds:
+  min_clearance: 0.8
+  speed_limit: 6.5
+  max_observation_age_s: 0.4
