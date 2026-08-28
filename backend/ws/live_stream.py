@@ -14,6 +14,15 @@ router = APIRouter(tags=["websocket"])
 
 @router.websocket("/ws/live/{scenario_id}")
 async def websocket_live_stream(websocket: WebSocket, scenario_id: str) -> None:
+    """Streams real-time simulation telemetry frames over WebSocket to connected frontend clients.
+
+    Args:
+        websocket: Connected FastAPI WebSocket client connection.
+        scenario_id: Identifier of the registered ScenarioDefinition to simulate and stream.
+
+    Streams:
+        JSON objects containing live TelemetryFrame dictionaries and terminal RunManifest payloads.
+    """
     await websocket.accept()
 
     scenario = get_scenario(scenario_id)

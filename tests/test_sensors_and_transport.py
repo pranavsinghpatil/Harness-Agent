@@ -13,7 +13,7 @@ from sandbox.sensors.camera import CameraSensor
 from sandbox.transport.bus import TransportBus
 
 
-def test_lidar_sensor_raycast():
+def test_lidar_sensor_raycast() -> None:
     world_map = WorldMap(width=50.0, height=50.0)
     # Obstacle 5 meters directly in front (+X) of rover at (10, 25)
     world_map.add_static_obstacle(StaticObstacle(id="wall_1", position=Vec2D(15.0, 25.0), width=1.0, length=2.0))
@@ -28,7 +28,7 @@ def test_lidar_sensor_raycast():
     assert packet.payload["closest_range"] < 5.0
 
 
-def test_transport_latency_and_delivery():
+def test_transport_latency_and_delivery() -> None:
     bus = TransportBus()
     # Register channel with 50 ms latency
     bus.register_channel("sensor.lidar", base_latency_s=0.050, jitter_std_s=0.0)
@@ -47,7 +47,7 @@ def test_transport_latency_and_delivery():
     assert due_ontime["sensor.lidar"][0] == payload
 
 
-def test_transport_packet_loss():
+def test_transport_packet_loss() -> None:
     rng = np.random.default_rng(42)
     bus = TransportBus(rng=rng)
     channel = bus.register_channel("sensor.lossy", base_latency_s=0.01, packet_loss_rate=1.0)  # 100% loss

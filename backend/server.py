@@ -26,7 +26,6 @@ app.add_middleware(
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 
-# Register routers
 app.include_router(scenarios_router)
 app.include_router(telemetry_router)
 app.include_router(ws_router)
@@ -34,10 +33,10 @@ app.include_router(ws_router)
 
 @app.get("/health")
 def health_check() -> dict[str, str]:
+    """Basic health check endpoint returning server liveness status."""
     return {"status": "ok", "service": "harness-agent-sandbox"}
 
 
-# Mount frontend directory for visualizer dashboard
 frontend_dir = Path(__file__).parent.parent / "frontend"
 if frontend_dir.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")

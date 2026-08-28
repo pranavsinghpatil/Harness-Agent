@@ -31,6 +31,9 @@ class TransportChannel:
     ) -> None:
         self.name = name
         self.rng = rng
+        self.default_base_latency_s = base_latency_s
+        self.default_jitter_std_s = jitter_std_s
+        self.default_packet_loss_rate = packet_loss_rate
         self.base_latency_s = base_latency_s
         self.jitter_std_s = jitter_std_s
         self.packet_loss_rate = packet_loss_rate
@@ -43,6 +46,16 @@ class TransportChannel:
         self.total_sent: int = 0
         self.total_delivered: int = 0
         self.total_dropped: int = 0
+
+    def reset(self) -> None:
+        """Restores channel parameters to initial baseline and empties in-flight buffers."""
+        self._in_flight.clear()
+        self.base_latency_s = self.default_base_latency_s
+        self.jitter_std_s = self.default_jitter_std_s
+        self.packet_loss_rate = self.default_packet_loss_rate
+        self.total_sent = 0
+        self.total_delivered = 0
+        self.total_dropped = 0
 
     def send(self, packet: Any, current_sim_time: float) -> bool:
         """Enqueue a packet for transmission. Returns False if dropped."""
@@ -147,5 +160,6 @@ class TransportBus:
         return delivered
 
     def reset(self) -> None:
+        """Resets all registered transport channels to initial baseline latencies and clears buffers."""
         for channel in self.channels.values():
-            channel.clear()
+            channel.reset()

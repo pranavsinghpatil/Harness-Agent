@@ -20,6 +20,22 @@ class StateEstimator:
     def __init__(self) -> None:
         self.pose = EstimatedPose()
 
+    @property
+    def x(self) -> float:
+        return self.pose.x
+
+    @property
+    def y(self) -> float:
+        return self.pose.y
+
+    @property
+    def heading(self) -> float:
+        return self.pose.heading
+
+    @property
+    def speed(self) -> float:
+        return self.pose.speed
+
     def reset(self, initial_x: float = 0.0, initial_y: float = 0.0, initial_heading: float = 0.0) -> None:
         self.pose = EstimatedPose(x=initial_x, y=initial_y, heading=initial_heading, speed=0.0)
 

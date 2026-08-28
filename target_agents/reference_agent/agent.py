@@ -31,9 +31,16 @@ class ReferenceAutonomousAgent(BaseTargetAgent):
         self.controller = PIDController()
         self.last_step_time: float = 0.0
 
-    def reset(self, goal_x: float, goal_y: float) -> None:
+    def reset(
+        self,
+        goal_x: float,
+        goal_y: float,
+        initial_x: float = 0.0,
+        initial_y: float = 0.0,
+        initial_heading: float = 0.0,
+    ) -> None:
         self.perception.reset()
-        self.estimator.reset()
+        self.estimator.reset(initial_x=initial_x, initial_y=initial_y, initial_heading=initial_heading)
         self.planner.set_goal(goal_x, goal_y)
         self.controller.reset()
         self.last_step_time = 0.0

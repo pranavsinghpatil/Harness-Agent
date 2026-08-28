@@ -161,7 +161,6 @@ class Polygon2D:
         """Calculate minimum Euclidean distance from a point to polygon boundaries."""
         min_d = float("inf")
         for edge in self.get_edges():
-            # Project point onto segment
             ab = edge.p2 - edge.p1
             ap = point - edge.p1
             ab_len_sq = ab.magnitude_sq
@@ -171,6 +170,40 @@ class Polygon2D:
                 t = max(0.0, min(1.0, ap.dot(ab) / ab_len_sq))
                 projection = edge.p1 + ab * t
                 d = point.distance_to(projection)
+            if d < min_d:
+                min_d = d
+        return min_d
+
+    def min_distance_to_segment(self, segment: Segment2D) -> float:
+        """Calculate minimum Euclidean distance from any vertex/edge of this polygon to a segment."""
+        # 1. Distance from polygon vertices to segment
+        min_d = float("inf")
+        ab = segment.p2 - segment.p1
+        ab_len_sq = ab.magnitude_sq
+        for v in self.vertices:
+            ap = v - segment.p1
+            t = 0.0 if ab_len_sq == 0 else max(0.0, min(1.0, ap.dot(ab) / ab_len_sq))
+            proj = segment.p1 + ab * t
+            d = v.distance_to(proj)
+            if d < min_d:
+                min_d = d
+
+        # 2. Distance from segment endpoints to polygon edges
+        for pt in (segment.p1, segment.p2):
+            d = self.min_distance_to_point(pt)
+            if d < min_d:
+                min_d = d
+
+        return min_d
+
+    def min_distance_to_polygon(self, other: Polygon2D) -> float:
+        """Calculate minimum Euclidean clearance distance between two convex polygons."""
+        if self.intersects(other):
+            return 0.0
+
+        min_d = float("inf")
+        for edge in other.get_edges():
+            d = self.min_distance_to_segment(edge)
             if d < min_d:
                 min_d = d
         return min_d

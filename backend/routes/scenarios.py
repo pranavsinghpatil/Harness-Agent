@@ -29,7 +29,10 @@ class RunRequest(BaseModel):
 
 
 def load_bundled_scenarios() -> None:
-    """Load default scenario files from the scenarios directory into memory."""
+    """Scans and parses YAML scenario templates from scenarios/ directory into registry memory.
+
+    Silently ignores unreadable or malformed files while logging successfully loaded scenarios.
+    """
     patterns = [
         "scenarios/templates/*.yaml",
         "scenarios/generated/*.yaml",
@@ -45,13 +48,17 @@ def load_bundled_scenarios() -> None:
                 pass
 
 
-# Initialize bundled scenarios
+# Initialize bundled scenarios on startup
 load_bundled_scenarios()
 
 
 @router.get("/")
 def get_all_scenarios() -> list[dict[str, Any]]:
-    """Lists all registered simulation scenarios."""
+    """Lists all registered simulation scenarios.
+
+    Returns:
+        list[dict[str, Any]]: List of scenario definitions serialized to dictionaries.
+    """
     load_bundled_scenarios()
     scenarios = []
     for sc_id in list_scenarios():
@@ -63,6 +70,17 @@ def get_all_scenarios() -> list[dict[str, Any]]:
 
 @router.get("/{scenario_id}")
 def get_scenario_by_id(scenario_id: str) -> dict[str, Any]:
+    """Retrieves a single registered scenario definition by ID.
+
+    Args:
+        scenario_id: Unique string identifier of the scenario.
+
+    Returns:
+        dict[str, Any]: Serialized ScenarioDefinition dictionary.
+
+    Raises:
+        HTTPException: Status 404 if scenario_id is not found in registry.
+    """
     sc = get_scenario(scenario_id)
     if not sc:
         raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
@@ -71,7 +89,18 @@ def get_scenario_by_id(scenario_id: str) -> dict[str, Any]:
 
 @router.post("/run")
 def execute_scenario_endpoint(req: RunRequest) -> dict[str, Any]:
-    """Runs a scenario and returns the manifest and telemetry trace."""
+    """Executes a simulation episode given a scenario ID or custom specification.
+
+    Args:
+        req: RunRequest containing scenario_id or scenario_spec, plus optional seed and max_sim_time.
+
+    Returns:
+        dict[str, Any]: Object containing manifest, total_frames count, and list of telemetry frames.
+
+    Raises:
+        HTTPException: Status 400 if neither scenario_id nor scenario_spec is provided.
+        HTTPException: Status 404 if scenario_id cannot be resolved.
+    """
     if req.scenario_spec:
         scenario = create_scenario(req.scenario_spec)
     elif req.scenario_id:
@@ -96,7 +125,17 @@ def execute_scenario_endpoint(req: RunRequest) -> dict[str, Any]:
 
 @router.post("/replay/{run_id}")
 def replay_endpoint(run_id: str) -> dict[str, Any]:
-    """Replays a previous run and evaluates bit-exact trace determinism."""
+    """Replays a previous execution run and evaluates bit-exact trace determinism.
+
+    Args:
+        run_id: Unique string identifier of the original run to replay.
+
+    Returns:
+        dict[str, Any]: Object containing replayed_manifest, determinism match boolean, hashes, and frames.
+
+    Raises:
+        HTTPException: Status 400 if replay fails or cached run data is unavailable.
+    """
     try:
         manifest, frames, comparison = replay_run(run_id)
         return {

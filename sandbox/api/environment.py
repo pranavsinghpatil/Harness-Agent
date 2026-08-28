@@ -97,12 +97,29 @@ class SandboxEnvironment:
         if scenario:
             self.load_scenario(scenario)
 
+    def _refresh_rng_bindings(self) -> None:
+        """Re-binds fresh seed-isolated RNG generators to all sensors, transport, and actuators."""
+        sensor_rng = self.rng_manager.get("sensors")
+        for sensor in self.sensors.values():
+            sensor.rng = sensor_rng
+
+        self.transport.rng = self.rng_manager.get("transport")
+        for channel in self.transport.channels.values():
+            channel.rng = self.transport.rng
+
+        self.actuators.rng = self.rng_manager.get("actuators")
+
     def load_scenario(self, scenario: ScenarioDefinition) -> None:
-        """Configures world entities, goals, initial pose, and fault schedules from scenario."""
+        """Configures world entities, goals, initial pose, and fault schedules from scenario.
+
+        Args:
+            scenario: The ScenarioDefinition model containing world, obstacles, and faults.
+        """
         self.scenario = scenario
         self.episode_config.max_sim_time = scenario.max_sim_time
         self.episode_config.seed = scenario.seed
         self.rng_manager.reset(scenario.seed)
+        self._refresh_rng_bindings()
 
         # Reset world map
         self.world_map = WorldMap(
@@ -153,11 +170,17 @@ class SandboxEnvironment:
         # Set faults
         self.faults.set_faults(scenario.fault_schedule)
 
-        # Reset target agent
-        self.target_agent.reset(scenario.world.goal[0], scenario.world.goal[1])
+        # Reset target agent with true initial pose
+        self.target_agent.reset(
+            scenario.world.goal[0],
+            scenario.world.goal[1],
+            scenario.world.initial_state.x,
+            scenario.world.initial_state.y,
+            scenario.world.initial_state.heading,
+        )
 
     def reset(self) -> None:
-        """Resets all simulation components to initial state."""
+        """Resets all simulation components, clocks, queues, and sensors to initial state."""
         self.clock.reset()
         self.event_queue.clear()
         self.lifecycle = EpisodeLifecycle(self.episode_config)
@@ -176,73 +199,22 @@ class SandboxEnvironment:
         if self.scenario:
             self.load_scenario(self.scenario)
 
-    def step(self, dt: float = 0.01) -> TelemetryFrame:
-        """Executes a single simulation tick (default 100 Hz = 0.01s)."""
-        sim_time = self.clock.advance_by(dt)
-
-        # 1. Update and apply active faults
-        active_fault_ids = self.faults.update(
-            sim_time=sim_time,
-            sensors=self.sensors,
-            transport=self.transport,
-            hardware=self.hardware,
-            actuators=self.actuators,
-        )
-
-        # 2. Get latest applied command from actuator pipeline
-        applied_command = self.actuators.step(sim_time)
-
-        # 3. Physics step: dynamics & collision checks
-        vehicle_state, collision_res = self.physics.step(
-            throttle=applied_command.throttle,
-            brake=applied_command.brake,
-            steering=applied_command.steering,
-            emergency_stop=applied_command.emergency_stop,
-            dt=dt,
-        )
-
-        # 4. Generate sensor packets for due sensors & dispatch to transport bus
+    def _sample_and_deliver_sensors(self, sim_time: float, vehicle_state: VehicleState) -> list[Any]:
+        """Samples active sensors and routes observations through the hardware transport bus."""
         for sensor_key, sensor in self.sensors.items():
             if sensor.should_sample(sim_time):
                 packet = sensor.sample(sim_time, vehicle_state, self.world_map)
                 if packet:
-                    channel_name = f"sensor.{sensor_key}"
-                    self.transport.send(channel_name, packet, sim_time)
+                    self.transport.send(f"sensor.{sensor_key}", packet, sim_time)
 
-        # 5. Deliver arrived sensor packets from transport bus
         delivered_by_channel = self.transport.deliver_all_due(sim_time)
-        all_delivered_packets = []
+        all_delivered = []
         for packets in delivered_by_channel.values():
-            all_delivered_packets.extend(packets)
+            all_delivered.extend(packets)
+        return all_delivered
 
-        # 6. Virtual Edge Compute scheduler step
-        self.hardware.step(sim_time, dt)
-
-        # 7. Deliver observations to target agent
-        if all_delivered_packets:
-            self.target_agent.receive_sensor_packets(all_delivered_packets, sim_time)
-
-        # 8. Agent control task execution (typically at 20 Hz, e.g. every 0.05s)
-        agent_command = self.target_agent.step(sim_time)
-
-        # 9. Submit agent command to actuator pipeline
-        self.actuators.submit_command(agent_command, sim_time)
-
-        # 10. Safety Oracle evaluation
-        obs_age = 0.0
-        if hasattr(self.target_agent, "perception"):
-            obs_age = self.target_agent.perception.state.get_max_observation_age(sim_time)
-
-        new_violations = self.safety.evaluate(
-            sim_time=sim_time,
-            state=vehicle_state,
-            params=self.vehicle_params,
-            collision_result=collision_res,
-            current_command=applied_command,
-            observation_age_s=obs_age,
-        )
-
-        # 11. Check Episode Termination Conditions
+    def _check_termination(self, sim_time: float, vehicle_state: VehicleState, collision_res: CollisionResult) -> None:
+        """Evaluates goal completion, collision termination, or timeout lifecycle triggers."""
         dist_to_goal = vehicle_state.position.distance_to(self.world_map.goal_position)
         if dist_to_goal <= self.episode_config.goal_tolerance:
             self.lifecycle.finish(
@@ -265,10 +237,17 @@ class SandboxEnvironment:
         else:
             self.lifecycle.check_timeout(sim_time)
 
-        # 12. Record Telemetry Frame
-        queue_depths = {
-            name: ch.in_flight_count for name, ch in self.transport.channels.items()
-        }
+    def _record_telemetry_frame(
+        self,
+        sim_time: float,
+        vehicle_state: VehicleState,
+        applied_command: ActuatorCommand,
+        collision_res: CollisionResult,
+        active_fault_ids: list[str],
+        new_violations: list[SafetyViolation],
+    ) -> TelemetryFrame:
+        """Constructs and stores a high-rate TelemetryFrame."""
+        queue_depths = {name: ch.in_flight_count for name, ch in self.transport.channels.items()}
         dyn_obs_data = [
             {
                 "id": o.id,
@@ -299,22 +278,61 @@ class SandboxEnvironment:
             dynamic_obstacles=dyn_obs_data,
             new_violations=[v.to_dict() for v in new_violations],
         )
-
         self.telemetry.record_frame(frame)
         return frame
 
+    def step(self, dt: float = 0.01) -> TelemetryFrame:
+        """Executes a single simulation tick (default 100 Hz = 0.01s).
+
+        Args:
+            dt: Timestep duration in seconds (must be positive).
+
+        Returns:
+            TelemetryFrame: Recorded snapshot of the simulation step.
+        """
+        sim_time = self.clock.advance_by(dt)
+
+        active_faults = self.faults.update(sim_time, self.sensors, self.transport, self.hardware, self.actuators)
+        applied_cmd = self.actuators.step(sim_time)
+        v_state, col_res = self.physics.step(
+            applied_cmd.throttle, applied_cmd.brake, applied_cmd.steering, applied_cmd.emergency_stop, dt
+        )
+
+        delivered_packets = self._sample_and_deliver_sensors(sim_time, v_state)
+        self.hardware.step(sim_time, dt)
+
+        if delivered_packets:
+            self.target_agent.receive_sensor_packets(delivered_packets, sim_time)
+
+        agent_cmd = self.target_agent.step(sim_time)
+        self.actuators.submit_command(agent_cmd, sim_time)
+
+        obs_age = 0.0
+        if hasattr(self.target_agent, "perception"):
+            obs_age = self.target_agent.perception.state.get_max_observation_age(sim_time)
+
+        violations = self.safety.evaluate(sim_time, v_state, self.vehicle_params, col_res, applied_cmd, obs_age)
+        self._check_termination(sim_time, v_state, col_res)
+
+        return self._record_telemetry_frame(sim_time, v_state, applied_cmd, col_res, active_faults, violations)
+
     def run_episode(self, max_sim_time: float | None = None) -> tuple[RunManifest, list[TelemetryFrame]]:
-        """Runs the entire episode to completion."""
+        """Runs the entire episode to completion and produces the RunManifest.
+
+        Args:
+            max_sim_time: Optional upper bound on simulation time in seconds.
+
+        Returns:
+            tuple[RunManifest, list[TelemetryFrame]]: Tuple containing final manifest and all recorded frames.
+        """
         self.reset()
         if max_sim_time:
             self.episode_config.max_sim_time = max_sim_time
 
         dt = self.episode_config.fixed_dt
-
         while not self.lifecycle.is_finished:
             self.step(dt)
 
-        # Build final RunManifest
         manifest = RunManifest(
             run_id=self.run_id,
             seed=self.episode_config.seed,

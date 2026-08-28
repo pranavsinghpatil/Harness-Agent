@@ -21,37 +21,44 @@ class CollisionDetector:
 
     @staticmethod
     def evaluate(vehicle_poly: Polygon2D, world_map: WorldMap) -> CollisionResult:
+        """Evaluates geometric collisions and true footprint clearance against all obstacles and walls.
+
+        Args:
+            vehicle_poly: The oriented 2D bounding polygon of the vehicle.
+            world_map: The WorldMap containing boundary walls and static/dynamic obstacles.
+
+        Returns:
+            CollisionResult containing is_collision, collided_entity_id, min_clearance, and closest_entity_id.
+        """
         result = CollisionResult()
-        center = Vec2D(
-            sum(v.x for v in vehicle_poly.vertices) / len(vehicle_poly.vertices),
-            sum(v.y for v in vehicle_poly.vertices) / len(vehicle_poly.vertices),
-        )
 
-        # 1. Check against boundary walls
+        # 1. Evaluate clearance and collision against boundary walls
         for idx, wall in enumerate(world_map.boundary_walls):
-            # Check edge-edge intersection
-            for v_edge in vehicle_poly.get_edges():
-                # Segment intersection check
-                t = wall.intersect_ray(v_edge.p1, (v_edge.p2 - v_edge.p1).normalized(), v_edge.length())
-                if t is not None:
-                    result.is_collision = True
-                    result.collided_entity_id = f"boundary_wall_{idx}"
-                    result.min_clearance = 0.0
-                    return result
+            wall_dist = vehicle_poly.min_distance_to_segment(wall)
+            if wall_dist <= 1e-4:
+                result.is_collision = True
+                result.collided_entity_id = f"boundary_wall_{idx}"
+                result.min_clearance = 0.0
+                result.closest_entity_id = f"boundary_wall_{idx}"
+                return result
 
-        # 2. Check against all obstacles
+            if wall_dist < result.min_clearance:
+                result.min_clearance = wall_dist
+                result.closest_entity_id = f"boundary_wall_{idx}"
+
+        # 2. Evaluate clearance and collision against obstacles
         for obstacle in world_map.get_all_obstacles():
             obs_poly = obstacle.get_polygon()
             if vehicle_poly.intersects(obs_poly):
                 result.is_collision = True
                 result.collided_entity_id = obstacle.id
                 result.min_clearance = 0.0
+                result.closest_entity_id = obstacle.id
                 return result
 
-            # Compute clearance
-            dist = obs_poly.min_distance_to_point(center)
-            if dist < result.min_clearance:
-                result.min_clearance = dist
+            obs_dist = vehicle_poly.min_distance_to_polygon(obs_poly)
+            if obs_dist < result.min_clearance:
+                result.min_clearance = obs_dist
                 result.closest_entity_id = obstacle.id
 
         return result

@@ -6,7 +6,7 @@ from sandbox.api.tools import create_scenario, run_episode, replay_run
 from sandbox.core.episode import EpisodeStatus
 
 
-def test_showcase_normal_baseline():
+def test_showcase_normal_baseline() -> None:
     with open("scenarios/generated/showcase_normal.yaml", "r", encoding="utf-8") as f:
         spec = yaml.safe_load(f)
 
@@ -21,7 +21,7 @@ def test_showcase_normal_baseline():
     assert manifest.status in ("completed_safe", "timeout", "goal_reached")
 
 
-def test_showcase_perturbed_safety_violation_and_replay():
+def test_showcase_perturbed_safety_violation_and_replay() -> None:
     with open("scenarios/generated/showcase_perturbed.yaml", "r", encoding="utf-8") as f:
         spec = yaml.safe_load(f)
 

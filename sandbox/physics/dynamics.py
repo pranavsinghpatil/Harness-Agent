@@ -64,60 +64,41 @@ class KinematicVehicleModel:
             heading=self.state.heading,
         )
 
-    def step(
-        self,
-        throttle: float,
-        brake: float,
-        steering_target: float,
-        emergency_stop: bool,
-        dt: float,
-    ) -> VehicleState:
-        """Integrates the vehicle motion forward by dt given actuator inputs."""
-        if dt <= 0:
-            return self.state
-
-        # Clamping inputs
-        throttle = max(0.0, min(1.0, throttle))
-        brake = max(0.0, min(1.0, brake))
-        steering_target = max(
-            -self.params.max_steer_angle,
-            min(self.params.max_steer_angle, steering_target),
-        )
-
-        # 1. Update steering angle with slew rate limiting
-        steer_diff = steering_target - self.state.steer_angle
+    def _update_steering(self, steering_target: float, dt: float) -> None:
+        """Updates vehicle wheel steer angle subject to steering limits and slew rate."""
+        clamped_target = max(-self.params.max_steer_angle, min(self.params.max_steer_angle, steering_target))
+        steer_diff = clamped_target - self.state.steer_angle
         max_steer_step = self.params.max_steer_rate * dt
         if abs(steer_diff) <= max_steer_step:
-            self.state.steer_angle = steering_target
+            self.state.steer_angle = clamped_target
         else:
             self.state.steer_angle += math.copysign(max_steer_step, steer_diff)
 
-        # 2. Compute net longitudinal acceleration
+    def _compute_longitudinal_acceleration(self, throttle: float, brake: float, emergency_stop: bool) -> float:
+        """Computes net longitudinal acceleration considering drive forces, braking, and drag."""
         if emergency_stop:
             if self.state.velocity > 0:
-                net_accel = -self.params.emergency_brake_deceleration
+                return -self.params.emergency_brake_deceleration
             elif self.state.velocity < 0:
-                net_accel = self.params.emergency_brake_deceleration
-            else:
-                net_accel = 0.0
+                return self.params.emergency_brake_deceleration
+            return 0.0
+
+        accel_cmd = throttle * self.params.max_acceleration
+        if self.state.velocity > 0:
+            brake_cmd = brake * self.params.max_brake_deceleration
+        elif self.state.velocity < 0:
+            brake_cmd = -brake * self.params.max_brake_deceleration
         else:
-            accel_cmd = throttle * self.params.max_acceleration
-            # Braking opposes current velocity direction
-            if self.state.velocity > 0:
-                brake_cmd = brake * self.params.max_brake_deceleration
-            elif self.state.velocity < 0:
-                brake_cmd = -brake * self.params.max_brake_deceleration
-            else:
-                brake_cmd = 0.0
+            brake_cmd = 0.0
 
-            drag = self.params.drag_coefficient * self.state.velocity
-            net_accel = accel_cmd - brake_cmd - drag
+        drag = self.params.drag_coefficient * self.state.velocity
+        return accel_cmd - brake_cmd - drag
 
+    def _integrate_velocity(self, net_accel: float, throttle: float, brake: float, emergency_stop: bool, dt: float) -> None:
+        """Integrates vehicle velocity and clamps within speed and zero-crossing boundaries."""
         self.state.acceleration = net_accel
-
-        # 3. Velocity integration
         new_v = self.state.velocity + net_accel * dt
-        # When braking from moving, stop at zero without overshoot
+
         if self.state.velocity > 0 and new_v <= 0 and (brake > 0 or emergency_stop or throttle == 0):
             new_v = 0.0
             self.state.acceleration = 0.0
@@ -130,18 +111,47 @@ class KinematicVehicleModel:
 
         self.state.velocity = max(self.params.min_speed, min(self.params.max_speed, new_v))
 
-        # 4. Angular velocity & heading integration (Kinematic Bicycle model)
-        # yaw_rate = (v / L) * tan(delta)
+    def _integrate_pose(self, dt: float) -> None:
+        """Integrates heading and Cartesian position from kinematic bicycle formulas."""
         yaw_rate = (self.state.velocity / self.params.wheelbase) * math.tan(self.state.steer_angle)
         self.state.angular_velocity = yaw_rate
 
         new_heading = self.state.heading + yaw_rate * dt
-        # Normalize heading to [-pi, pi]
         self.state.heading = (new_heading + math.pi) % (2 * math.pi) - math.pi
 
-        # 5. Position integration
         dx = self.state.velocity * math.cos(self.state.heading) * dt
         dy = self.state.velocity * math.sin(self.state.heading) * dt
         self.state.position = self.state.position + Vec2D(dx, dy)
+
+    def step(
+        self,
+        throttle: float,
+        brake: float,
+        steering_target: float,
+        emergency_stop: bool,
+        dt: float,
+    ) -> VehicleState:
+        """Integrates vehicle state forward by dt using kinematic bicycle dynamics.
+
+        Args:
+            throttle: Normalized throttle command in range [0.0, 1.0].
+            brake: Normalized brake command in range [0.0, 1.0].
+            steering_target: Desired wheel steer angle in radians [-max_steer, +max_steer].
+            emergency_stop: Boolean flag to immediately engage maximum emergency braking.
+            dt: Discrete simulation timestep in seconds (must be strictly positive).
+
+        Returns:
+            VehicleState: Mutated reference to vehicle state after integration.
+        """
+        if dt <= 0:
+            return self.state
+
+        clamped_throttle = max(0.0, min(1.0, throttle))
+        clamped_brake = max(0.0, min(1.0, brake))
+
+        self._update_steering(steering_target, dt)
+        net_accel = self._compute_longitudinal_acceleration(clamped_throttle, clamped_brake, emergency_stop)
+        self._integrate_velocity(net_accel, clamped_throttle, clamped_brake, emergency_stop, dt)
+        self._integrate_pose(dt)
 
         return self.state

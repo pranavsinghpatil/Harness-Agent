@@ -3,7 +3,7 @@
 from sandbox.api.tools import create_scenario, run_episode, replay_run
 
 
-def test_bit_exact_determinism():
+def test_bit_exact_determinism() -> None:
     spec = {
         "id": "det_test_scenario",
         "name": "Determinism Verification",

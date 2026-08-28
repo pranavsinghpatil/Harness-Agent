@@ -20,7 +20,17 @@ _RUN_STORAGE: dict[str, tuple[RunManifest, list[TelemetryFrame]]] = {}
 
 
 def create_scenario(spec: dict[str, Any] | str) -> ScenarioDefinition:
-    """Parse and register a scenario from dictionary or YAML/JSON string."""
+    """Parse, validate, and register a ScenarioDefinition from a dictionary or YAML/JSON string.
+
+    Args:
+        spec: Raw scenario dictionary or YAML/JSON specification string.
+
+    Returns:
+        ScenarioDefinition: The validated and registered scenario model.
+
+    Raises:
+        ValueError: If parsing fails or the specification does not conform to ScenarioDefinition schema.
+    """
     if isinstance(spec, str):
         try:
             data = yaml.safe_load(spec)
@@ -35,10 +45,23 @@ def create_scenario(spec: dict[str, Any] | str) -> ScenarioDefinition:
 
 
 def get_scenario(scenario_id: str) -> Optional[ScenarioDefinition]:
+    """Retrieves a registered scenario by ID from in-memory storage.
+
+    Args:
+        scenario_id: Unique string identifier of the scenario.
+
+    Returns:
+        Optional[ScenarioDefinition]: The scenario definition if found, else None.
+    """
     return _SCENARIO_REGISTRY.get(scenario_id)
 
 
 def list_scenarios() -> list[str]:
+    """Returns a list of all registered scenario identifiers.
+
+    Returns:
+        list[str]: Registered scenario IDs.
+    """
     return list(_SCENARIO_REGISTRY.keys())
 
 
@@ -49,7 +72,21 @@ def run_episode(
     max_sim_time: float | None = None,
     run_id: str | None = None,
 ) -> tuple[RunManifest, list[TelemetryFrame]]:
-    """Executes a simulation episode given a scenario or scenario_id."""
+    """Executes a simulation episode given a scenario or scenario_id.
+
+    Args:
+        scenario: A ScenarioDefinition instance or string ID registered in the scenario registry.
+        target_agent: Optional autonomous controller under test (defaults to ReferenceAutonomousAgent).
+        seed: Optional pseudo-random seed override (clones scenario without mutating registry).
+        max_sim_time: Maximum simulation duration in seconds (defaults to scenario.max_duration_seconds).
+        run_id: Optional custom identifier for the execution run.
+
+    Returns:
+        tuple[RunManifest, list[TelemetryFrame]]: A tuple of the final execution manifest and recorded frames.
+
+    Raises:
+        ValueError: If a scenario string ID is provided but not found in the registry.
+    """
     if isinstance(scenario, str):
         sc_obj = _SCENARIO_REGISTRY.get(scenario)
         if not sc_obj:
@@ -57,11 +94,13 @@ def run_episode(
     else:
         sc_obj = scenario
 
+    # Clone scenario model to prevent mutating shared registry instance
+    sc_copy = sc_obj.model_copy(deep=True)
     if seed is not None:
-        sc_obj.seed = seed
+        sc_copy.seed = seed
 
     agent = target_agent or ReferenceAutonomousAgent()
-    env = SandboxEnvironment(scenario=sc_obj, target_agent=agent, run_id=run_id)
+    env = SandboxEnvironment(scenario=sc_copy, target_agent=agent, run_id=run_id)
     manifest, frames = env.run_episode(max_sim_time=max_sim_time)
 
     # Cache run for query/replay
@@ -70,6 +109,14 @@ def run_episode(
 
 
 def get_run(run_id: str) -> Optional[tuple[RunManifest, list[TelemetryFrame]]]:
+    """Retrieves cached execution run manifest and recorded telemetry frames.
+
+    Args:
+        run_id: Unique string identifier of the execution run.
+
+    Returns:
+        Optional[tuple[RunManifest, list[TelemetryFrame]]]: Cached manifest and frames tuple, or None.
+    """
     return _RUN_STORAGE.get(run_id)
 
 
@@ -77,7 +124,18 @@ def replay_run(
     run_id: str,
     target_agent: BaseTargetAgent | None = None,
 ) -> tuple[RunManifest, list[TelemetryFrame], ReplayComparisonResult]:
-    """Re-executes an existing run and verifies determinism against original trace hash."""
+    """Re-executes an existing run and verifies bit-exact determinism against original trace hash.
+
+    Args:
+        run_id: Unique string identifier of the original run to replay.
+        target_agent: Optional autonomous controller under test (defaults to ReferenceAutonomousAgent).
+
+    Returns:
+        tuple[RunManifest, list[TelemetryFrame], ReplayComparisonResult]: Replayed manifest, frames, and comparison verdict.
+
+    Raises:
+        ValueError: If run_id is not found in run storage or the scenario is missing.
+    """
     cached = _RUN_STORAGE.get(run_id)
     if not cached:
         raise ValueError(f"Run ID '{run_id}' not found in run storage")
@@ -99,8 +157,8 @@ def replay_run(
     comparison = DeterministicReplayer.compare_traces(
         [f.to_dict() for f in orig_frames],
         [f.to_dict() for f in replayed_frames],
+        orig_hash=orig_manifest.trace_hash,
+        rep_hash=replayed_manifest.trace_hash,
     )
-    comparison.original_trace_hash = orig_manifest.trace_hash
-    comparison.replayed_trace_hash = replayed_manifest.trace_hash
 
     return replayed_manifest, replayed_frames, comparison

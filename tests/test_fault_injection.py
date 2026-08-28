@@ -8,7 +8,7 @@ from sandbox.hardware.scheduler import VirtualEdgeScheduler
 from sandbox.actuators.pipeline import ActuatorPipeline
 
 
-def test_fault_lifecycle():
+def test_fault_lifecycle() -> None:
     controller = FaultController()
     f1 = FaultDefinition(
         id="f_dropout",
@@ -41,7 +41,7 @@ def test_fault_lifecycle():
     assert "f_dropout" not in controller.get_active_fault_ids()
 
 
-def test_actuator_brake_fault():
+def test_actuator_brake_fault() -> None:
     controller = FaultController()
     f_brake = FaultDefinition(
         id="f_brake_fade",

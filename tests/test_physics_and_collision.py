@@ -8,7 +8,7 @@ from sandbox.physics.dynamics import KinematicVehicleModel, VehicleState, Vehicl
 from sandbox.physics.collision import CollisionDetector
 
 
-def test_vec2d_arithmetic():
+def test_vec2d_arithmetic() -> None:
     v1 = Vec2D(3.0, 4.0)
     v2 = Vec2D(1.0, 2.0)
     assert (v1 + v2) == Vec2D(4.0, 6.0)
@@ -17,7 +17,7 @@ def test_vec2d_arithmetic():
     assert v1.dot(v2) == 11.0
 
 
-def test_sat_polygon_intersection():
+def test_sat_polygon_intersection() -> None:
     poly1 = Polygon2D.from_box(center=Vec2D(0.0, 0.0), width=2.0, length=2.0, heading=0.0)
     # Overlapping box
     poly2 = Polygon2D.from_box(center=Vec2D(1.5, 0.0), width=2.0, length=2.0, heading=0.0)
@@ -28,7 +28,7 @@ def test_sat_polygon_intersection():
     assert poly1.intersects(poly3) is False
 
 
-def test_vehicle_acceleration_and_braking():
+def test_vehicle_acceleration_and_braking() -> None:
     model = KinematicVehicleModel()
     model.set_state(VehicleState(position=Vec2D(0.0, 0.0), velocity=0.0))
 
@@ -46,7 +46,7 @@ def test_vehicle_acceleration_and_braking():
     assert model.state.velocity == 0.0  # Stopped smoothly without flipping into negative reverse
 
 
-def test_collision_detector():
+def test_collision_detector() -> None:
     world_map = WorldMap(width=50.0, height=50.0)
     obs = StaticObstacle(id="obs_1", position=Vec2D(10.0, 10.0), width=2.0, length=2.0)
     world_map.add_static_obstacle(obs)

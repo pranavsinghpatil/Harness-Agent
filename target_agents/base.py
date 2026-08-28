@@ -14,8 +14,15 @@ class BaseTargetAgent(ABC):
         self.agent_id = agent_id
 
     @abstractmethod
-    def reset(self, goal_x: float, goal_y: float) -> None:
-        """Reset internal memory, estimators, and targets."""
+    def reset(
+        self,
+        goal_x: float,
+        goal_y: float,
+        initial_x: float = 0.0,
+        initial_y: float = 0.0,
+        initial_heading: float = 0.0,
+    ) -> None:
+        """Reset internal memory, estimators, and targets with initial position coordinates."""
         pass
 
     @abstractmethod

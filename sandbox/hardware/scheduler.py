@@ -46,12 +46,8 @@ class VirtualEdgeScheduler:
         elif self.profile.scheduler_policy == SchedulerPolicy.EDF:
             self.task_queue.sort(key=lambda t: t.deadline)
 
-    def step(self, sim_time: float, dt: float) -> list[ComputeTask]:
-        """Processes compute tasks for a time slice dt and updates thermal model."""
-        if dt <= 0:
-            return []
-
-        # 1. Thermal dynamics update
+    def _update_thermal_state(self, dt: float) -> None:
+        """Updates processor temperature based on load and applies throttling if threshold exceeded."""
         busy_factor = 1.0 if self.task_queue else 0.1
         temp_delta = (
             self.profile.thermal_heat_coeff * busy_factor * 100.0 * dt
@@ -62,36 +58,28 @@ class VirtualEdgeScheduler:
             self.profile.current_temperature + temp_delta,
         )
 
-        # Check thermal throttling
         if self.profile.current_temperature >= self.profile.thermal_throttle_temp:
             self.profile.is_throttled = True
-            self.profile.effective_cpu_ratio = 0.4  # Throttle to 40% clock speed
+            self.profile.effective_cpu_ratio = 0.4
         elif self.profile.current_temperature < self.profile.thermal_throttle_temp - 5.0:
             self.profile.is_throttled = False
             self.profile.effective_cpu_ratio = 1.0
 
-        # Available compute capacity in this dt step
-        available_compute = (
-            self.profile.cpu_capacity_units_per_sec
-            * self.profile.effective_cpu_ratio
-            * dt
-        )
-
+    def _process_task_queue(self, sim_time: float, dt: float) -> tuple[list[ComputeTask], float]:
+        """Executes queued compute tasks given available CPU capacity in time slice dt."""
+        available_compute = self.profile.cpu_capacity_units_per_sec * self.profile.effective_cpu_ratio * dt
         just_completed: list[ComputeTask] = []
 
-        # 2. Process tasks from queue
         while self.task_queue and available_compute > 0:
             current_task = self.task_queue[0]
             needed = current_task.compute_cost_units - current_task.progress_units
 
             if available_compute >= needed:
-                # Task completes
                 available_compute -= needed
                 current_task.progress_units = current_task.compute_cost_units
                 current_task.is_completed = True
                 self.task_queue.pop(0)
 
-                # Check if deadline missed
                 if sim_time > current_task.deadline:
                     current_task.is_deadline_missed = True
                     self.metrics.total_deadline_misses += 1
@@ -109,11 +97,13 @@ class VirtualEdgeScheduler:
                 self.completed_tasks.append(current_task)
                 self.metrics.total_completed_tasks += 1
             else:
-                # Partial progress
                 current_task.progress_units += available_compute
                 available_compute = 0.0
 
-        # 3. Check for expired/missed deadlines in remaining queued tasks
+        return just_completed, available_compute
+
+    def _audit_remaining_deadlines(self, sim_time: float) -> None:
+        """Checks if any remaining in-queue tasks have exceeded their deadline timestamp."""
         for task in self.task_queue:
             if sim_time > task.deadline and not task.is_deadline_missed:
                 task.is_deadline_missed = True
@@ -128,15 +118,37 @@ class VirtualEdgeScheduler:
                     }
                 )
 
-        # 4. Update metrics
+    def _update_metrics(self, available_compute: float, dt: float) -> None:
+        """Updates internal telemetry metrics for queue depth, utilization, and temperature."""
         self.metrics.queue_depth = len(self.task_queue)
         self.metrics.temperature_celsius = round(self.profile.current_temperature, 1)
         self.metrics.is_throttled = self.profile.is_throttled
-        self.metrics.cpu_utilization = round(1.0 - (available_compute / max(1e-5, self.profile.cpu_capacity_units_per_sec * dt)), 2)
+        self.metrics.cpu_utilization = round(
+            1.0 - (available_compute / max(1e-5, self.profile.cpu_capacity_units_per_sec * dt)), 2
+        )
+
+    def step(self, sim_time: float, dt: float) -> list[ComputeTask]:
+        """Processes scheduled compute tasks for a timestep dt and updates hardware thermal state.
+
+        Args:
+            sim_time: Current simulation timestamp in seconds.
+            dt: Timestep duration in seconds (early return with empty list if dt <= 0).
+
+        Returns:
+            list[ComputeTask]: List of tasks completed during this timestep slice.
+        """
+        if dt <= 0:
+            return []
+
+        self._update_thermal_state(dt)
+        just_completed, remaining_compute = self._process_task_queue(sim_time, dt)
+        self._audit_remaining_deadlines(sim_time)
+        self._update_metrics(remaining_compute, dt)
 
         return just_completed
 
     def reset(self) -> None:
+        """Resets task queues, completed history, metrics, and temperature to ambient baseline."""
         self.task_queue.clear()
         self.completed_tasks.clear()
         self.deadline_miss_events.clear()

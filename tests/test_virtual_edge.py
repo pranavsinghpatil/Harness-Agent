@@ -4,7 +4,7 @@ from sandbox.hardware.profile import HardwareProfile, ComputeTask, SchedulerPoli
 from sandbox.hardware.scheduler import VirtualEdgeScheduler
 
 
-def test_edge_scheduler_deadline_miss():
+def test_edge_scheduler_deadline_miss() -> None:
     profile = HardwareProfile(cpu_capacity_units_per_sec=100.0)
     scheduler = VirtualEdgeScheduler(profile)
 
@@ -27,7 +27,7 @@ def test_edge_scheduler_deadline_miss():
     assert scheduler.metrics.total_deadline_misses >= 1
 
 
-def test_thermal_throttling_curve():
+def test_thermal_throttling_curve() -> None:
     profile = HardwareProfile(
         cpu_capacity_units_per_sec=100.0,
         thermal_ambient_temp=35.0,

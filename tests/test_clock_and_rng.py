@@ -5,7 +5,7 @@ from sandbox.core.clock import SimClock, EventQueue
 from sandbox.core.rng import RngManager
 
 
-def test_clock_progression():
+def test_clock_progression() -> None:
     clock = SimClock(start_time=0.0)
     assert clock.current_time == 0.0
     assert clock.step_count == 0
@@ -18,7 +18,7 @@ def test_clock_progression():
     assert clock.current_time == 1.5
 
 
-def test_clock_rejects_invalid_dt():
+def test_clock_rejects_invalid_dt() -> None:
     clock = SimClock(start_time=1.0)
     with pytest.raises(ValueError):
         clock.advance_by(0.0)
@@ -30,7 +30,7 @@ def test_clock_rejects_invalid_dt():
         clock.advance_to(0.5)  # Cannot rewind
 
 
-def test_event_queue_deterministic_order():
+def test_event_queue_deterministic_order() -> None:
     q = EventQueue()
     # Add events out of order
     q.push(timestamp=1.5, event_type="sensor", payload="A", priority=1)
@@ -55,7 +55,7 @@ def test_event_queue_deterministic_order():
     assert q.is_empty
 
 
-def test_rng_manager_isolation():
+def test_rng_manager_isolation() -> None:
     # Same master seed must produce identical numbers
     rng1 = RngManager(master_seed=1234)
     rng2 = RngManager(master_seed=1234)

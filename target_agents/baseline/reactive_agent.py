@@ -20,13 +20,20 @@ class ReactiveBaselineAgent(BaseTargetAgent):
         self.latest_heading: float = 0.0
         self.last_sensor_time: float = 0.0
 
-    def reset(self, goal_x: float, goal_y: float) -> None:
+    def reset(
+        self,
+        goal_x: float,
+        goal_y: float,
+        initial_x: float = 0.0,
+        initial_y: float = 0.0,
+        initial_heading: float = 0.0,
+    ) -> None:
         self.goal_x = goal_x
         self.goal_y = goal_y
         self.latest_closest_range = float("inf")
-        self.latest_pos_x = 0.0
-        self.latest_pos_y = 0.0
-        self.latest_heading = 0.0
+        self.latest_pos_x = initial_x
+        self.latest_pos_y = initial_y
+        self.latest_heading = initial_heading
         self.last_sensor_time = 0.0
 
     def receive_sensor_packets(self, packets: list[SensorPacket], current_sim_time: float) -> None:
