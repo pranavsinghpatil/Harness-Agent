@@ -28,6 +28,10 @@ dist-ssr
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
 venv/
 env/
 .venv/
@@ -36,3 +40,7 @@ env/
 .env
 .env.test
 .env.production
+
+# Binary / Document Assets
+*.pdf
+

@@ -1,0 +1,57 @@
+id: "showcase_perturbed_failure"
+name: "Showcase Scenario: Hardware Fault Safety Violation"
+description: "A dynamic crossing obstacle enters the rover's path under compound perturbations: 310ms camera latency, 0.7s LiDAR dropout, and brake actuator delay. Late braking causes safety violation."
+seed: 1337
+max_sim_time: 12.0
+world:
+  width: 50.0
+  height: 50.0
+  goal: [40.0, 25.0]
+  initial_state:
+    x: 4.0
+    y: 25.0
+    heading: 0.0
+    velocity: 0.0
+  obstacles:
+    - id: "crossing_pedestrian"
+      type: "dynamic"
+      x: 18.0
+      y: 16.0
+      width: 1.2
+      length: 1.2
+      heading: 1.5708
+      target_speed: 1.8
+      waypoints:
+        - [18.0, 32.0]
+fault_schedule:
+  - id: "camera_perception_latency"
+    target: "transport.camera"
+    type: "added_latency"
+    start_time: 2.0
+    duration: 3.5
+    parameters:
+      latency_ms: 310.0
+  - id: "lidar_temporary_dropout"
+    target: "sensor.lidar"
+    type: "dropout"
+    start_time: 2.3
+    duration: 0.7
+    parameters: {}
+  - id: "brake_actuation_delay"
+    target: "actuator.brake"
+    type: "extra_delay"
+    start_time: 2.5
+    duration: 2.0
+    parameters:
+      delay_ms: 250.0
+  - id: "brake_fading"
+    target: "actuator.brake"
+    type: "reduced_effectiveness"
+    start_time: 2.5
+    duration: 2.0
+    parameters:
+      factor: 0.4
+safety_thresholds:
+  min_clearance: 0.8
+  speed_limit: 6.5
+  max_observation_age_s: 0.4

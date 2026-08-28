@@ -1,0 +1,20 @@
+id: "empty_track_v1"
+name: "Empty Track Navigation"
+description: "Straight navigation to goal in open environment without obstacles to verify kinematic baseline."
+seed: 42
+max_sim_time: 15.0
+world:
+  width: 50.0
+  height: 50.0
+  goal: [40.0, 25.0]
+  initial_state:
+    x: 5.0
+    y: 25.0
+    heading: 0.0
+    velocity: 0.0
+  obstacles: []
+fault_schedule: []
+safety_thresholds:
+  min_clearance: 0.8
+  speed_limit: 6.5
+  max_observation_age_s: 0.4
