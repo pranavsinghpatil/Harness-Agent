@@ -46,7 +46,7 @@ class InvestigationPayload(BaseModel):
 
     @field_validator("objective", mode="before")
     @classmethod
-    def validate_objective(cls, value: object) -> str:
+    def validate_objective(cls: type[InvestigationPayload], value: object) -> str:
         """Reject blank objectives as a client validation error."""
         if not isinstance(value, str):
             raise ValueError("objective must be a string")
