@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-from sandbox.experiments import PerturbationDimension, default_perturbation_space
+from sandbox.experiments import PerturbationDimension, PerturbationSpace, default_perturbation_space
 from sandbox.faults.controller import FaultController
+from sandbox.faults.schema import FaultDefinition
 from sandbox.api.environment import SandboxEnvironment
 
 
 def test_default_space_compiles_sorted_non_baseline_faults() -> None:
-    space = default_perturbation_space()
+    space: PerturbationSpace = default_perturbation_space()
 
-    overrides = space.build_fault_overrides(
+    overrides: list[dict[str, Any]] = space.build_fault_overrides(
         {
             "actuator.brake.effectiveness": 0.4,
             "sensor.camera.latency_ms": 310.0,
@@ -30,7 +33,7 @@ def test_default_space_compiles_sorted_non_baseline_faults() -> None:
 
 
 def test_baseline_values_are_not_injected() -> None:
-    space = default_perturbation_space()
+    space: PerturbationSpace = default_perturbation_space()
 
     assert space.build_fault_overrides(
         {
@@ -42,7 +45,7 @@ def test_baseline_values_are_not_injected() -> None:
 
 
 def test_dimension_rejects_out_of_range_values() -> None:
-    dimension = PerturbationDimension(
+    dimension: PerturbationDimension = PerturbationDimension(
         id="camera_latency",
         target="transport.camera",
         fault_type="added_latency",
@@ -56,10 +59,49 @@ def test_dimension_rejects_out_of_range_values() -> None:
         dimension.to_fault(101.0, "exp_bad")
 
 
+def test_dimension_rejects_unknown_runtime_fault_parameter() -> None:
+    with pytest.raises(ValueError, match="Unsupported fault parameter"):
+        PerturbationDimension(
+            id="unknown_fault",
+            target="transport.camera",
+            fault_type="added_latency",
+            parameter_name="ignored_parameter",
+            minimum=0.0,
+            maximum=1.0,
+            baseline=0.0,
+        )
+
+
+@pytest.mark.parametrize("bad_value", [float("inf"), float("-inf"), float("nan")])
+def test_dimension_rejects_non_finite_bounds_and_values(bad_value: float) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        PerturbationDimension(
+            id="non_finite",
+            target="transport.camera",
+            fault_type="added_latency",
+            parameter_name="latency_ms",
+            minimum=0.0,
+            maximum=100.0,
+            baseline=bad_value,
+        )
+
+    dimension: PerturbationDimension = PerturbationDimension(
+        id="finite_dimension",
+        target="transport.camera",
+        fault_type="added_latency",
+        parameter_name="latency_ms",
+        minimum=0.0,
+        maximum=100.0,
+        baseline=0.0,
+    )
+    with pytest.raises(ValueError, match="finite"):
+        dimension.validate_value(bad_value)
+
+
 def test_cpu_availability_fault_changes_scheduler_capacity_and_reverts() -> None:
-    env = SandboxEnvironment()
-    controller = FaultController()
-    fault = default_perturbation_space().get_dimension(
+    env: SandboxEnvironment = SandboxEnvironment()
+    controller: FaultController = FaultController()
+    fault: FaultDefinition = default_perturbation_space().get_dimension(
         "hardware.compute.availability"
     ).to_fault(0.4, "exp_cpu")
 
@@ -69,3 +111,27 @@ def test_cpu_availability_fault_changes_scheduler_capacity_and_reverts() -> None
 
     controller.update(6.0, env.sensors, env.transport, env.hardware, env.actuators)
     assert env.hardware.profile.cpu_availability_ratio == 1.0
+
+
+def test_replacing_schedule_reverts_active_hardware_fault() -> None:
+    env: SandboxEnvironment = SandboxEnvironment()
+    controller: FaultController = env.faults
+    fault: FaultDefinition = default_perturbation_space().get_dimension(
+        "hardware.compute.availability"
+    ).to_fault(0.4, "exp_replace")
+    controller.set_faults([fault])
+    controller.update(2.0, env.sensors, env.transport, env.hardware, env.actuators)
+    assert env.hardware.profile.cpu_availability_ratio == 0.4
+
+    controller.clear_active_faults(env.sensors, env.transport, env.hardware, env.actuators)
+    controller.set_faults([])
+    assert env.hardware.profile.cpu_availability_ratio == 1.0
+
+
+def test_idle_reduced_compute_availability_does_not_report_utilization() -> None:
+    env: SandboxEnvironment = SandboxEnvironment()
+    env.hardware.profile.cpu_availability_ratio = 0.4
+
+    env.hardware.step(sim_time=0.0, dt=0.1)
+
+    assert env.hardware.metrics.cpu_utilization == 0.0

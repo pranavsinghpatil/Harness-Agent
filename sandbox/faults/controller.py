@@ -26,6 +26,21 @@ class FaultController:
     def set_faults(self, faults: list[FaultDefinition]) -> None:
         self.scheduled_faults = list(faults)
 
+    def clear_active_faults(
+        self,
+        sensors: dict[str, BaseSensor],
+        transport: TransportBus,
+        hardware: VirtualEdgeScheduler,
+        actuators: ActuatorPipeline,
+    ) -> None:
+        """Revert active state before discarding the schedule that created it."""
+        active_faults: list[FaultDefinition] = [
+            fault for fault in self.scheduled_faults if fault.id in self._active_fault_ids
+        ]
+        for fault in active_faults:
+            self._revert_fault(fault, sensors, transport, hardware, actuators)
+        self._active_fault_ids.clear()
+
     def get_active_fault_ids(self) -> list[str]:
         return sorted(list(self._active_fault_ids))
 

@@ -7,11 +7,12 @@ planner to reach into sandbox internals.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from sandbox.faults.schema import FaultDefinition
+from sandbox.faults.schema import FaultDefinition, is_supported_fault_parameter
 
 
 class PerturbationDimension(BaseModel):
@@ -32,15 +33,25 @@ class PerturbationDimension(BaseModel):
     @model_validator(mode="after")
     def validate_bounds(self) -> PerturbationDimension:
         """Reject malformed ranges before an experiment can reach the sandbox."""
+        for field_name in ("minimum", "maximum", "baseline", "start_time", "duration"):
+            field_value: float = getattr(self, field_name)
+            if not math.isfinite(field_value):
+                raise ValueError(f"{field_name} must be finite")
         if self.minimum > self.maximum:
             raise ValueError("minimum must be less than or equal to maximum")
         if not self.minimum <= self.baseline <= self.maximum:
             raise ValueError("baseline must be within minimum and maximum")
+        if not is_supported_fault_parameter(self.target, self.fault_type, self.parameter_name):
+            raise ValueError(
+                f"Unsupported fault parameter '{self.target}:{self.fault_type}:{self.parameter_name}'"
+            )
         return self
 
     def validate_value(self, value: float) -> float:
         """Validate and normalize a planner-selected value."""
-        numeric_value = float(value)
+        numeric_value: float = float(value)
+        if not math.isfinite(numeric_value):
+            raise ValueError(f"Perturbation '{self.id}' value must be finite")
         if not self.minimum <= numeric_value <= self.maximum:
             raise ValueError(
                 f"Perturbation '{self.id}' value {numeric_value} is outside "
@@ -54,7 +65,7 @@ class PerturbationDimension(BaseModel):
 
     def to_fault(self, value: float, experiment_id: str) -> FaultDefinition:
         """Compile a selected value into an immutable sandbox fault definition."""
-        selected_value = self.validate_value(value)
+        selected_value: float = self.validate_value(value)
         return FaultDefinition(
             id=f"{experiment_id}:{self.id}",
             target=self.target,
@@ -73,7 +84,7 @@ class PerturbationSpace(BaseModel):
     @model_validator(mode="after")
     def validate_unique_ids(self) -> PerturbationSpace:
         """Keep dimension identifiers stable and unambiguous in evidence."""
-        ids = [dimension.id for dimension in self.dimensions]
+        ids: list[str] = [dimension.id for dimension in self.dimensions]
         if len(ids) != len(set(ids)):
             raise ValueError("perturbation dimension IDs must be unique")
         return self
@@ -92,17 +103,26 @@ class PerturbationSpace(BaseModel):
     ) -> list[dict[str, Any]]:
         """Compile selected non-baseline values into session fault overrides.
 
-        Values are sorted by dimension ID so the generated fault schedule is
-        stable even when a planner supplies a regular dictionary.
+        Args:
+            values: Mapping from each known dimension ID to a selected numeric value.
+            experiment_id: Stable identifier used as the prefix of generated fault IDs.
+
+        Returns:
+            A dimension-ID-sorted list of serialized ``FaultDefinition`` mappings.
+            Baseline values are omitted because they do not inject a fault.
+
+        Raises:
+            ValueError: If a dimension ID is unknown or a selected value is non-finite
+                or outside that dimension's inclusive bounds.
         """
-        unknown_ids = set(values).difference(dimension.id for dimension in self.dimensions)
+        unknown_ids: set[str] = set(values).difference(dimension.id for dimension in self.dimensions)
         if unknown_ids:
             raise ValueError(f"Unknown perturbation dimensions: {sorted(unknown_ids)}")
 
         overrides: list[dict[str, Any]] = []
         for dimension_id in sorted(values):
-            dimension = self.get_dimension(dimension_id)
-            value = dimension.validate_value(values[dimension_id])
+            dimension: PerturbationDimension = self.get_dimension(dimension_id)
+            value: float = dimension.validate_value(values[dimension_id])
             if value == dimension.baseline:
                 continue
             overrides.append(dimension.to_fault(value, experiment_id).model_dump())

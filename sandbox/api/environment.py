@@ -182,6 +182,7 @@ class SandboxEnvironment:
             max_observation_age_s=scenario.safety_thresholds.get("max_observation_age_s", 0.4),
         )
 
+        self.faults.clear_active_faults(self.sensors, self.transport, self.hardware, self.actuators)
         self.faults.set_faults(scenario.fault_schedule)
 
         self.target_agent.reset(
