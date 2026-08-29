@@ -78,3 +78,19 @@ def test_safe_interaction_contradicts_matching_interaction_hypothesis() -> None:
     assert hypothesis is not None
     assert hypothesis.hypothesis_id == "H-camera_latency_ms+compute_availability"
     assert hypothesis.contradicting_experiment_ids == ("exp_002",)
+
+
+def test_unknown_candidate_dimension_fails_fast() -> None:
+    engine: HypothesisEngine = HypothesisEngine()
+    record: EvidenceRecord = _record(
+        "exp_001",
+        {"camera.latency_ms": 400.0, "unknown.dimension": 1.0},
+        False,
+    )
+
+    try:
+        engine.observe(record, DIMENSIONS)
+    except ValueError as exc:
+        assert "unknown dimensions" in str(exc)
+    else:
+        raise AssertionError("unknown dimensions should be rejected")

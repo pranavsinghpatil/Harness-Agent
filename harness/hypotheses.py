@@ -85,6 +85,11 @@ class HypothesisEngine:
         self, record: EvidenceRecord, dimensions: tuple[PlannerDimension, ...]
     ) -> tuple[str, ...]:
         """Identify dimensions changed from their declared baseline."""
+        known_dimensions: set[str] = {dimension.id for dimension in dimensions}
+        unknown_dimensions: set[str] = set(record.candidate.values).difference(known_dimensions)
+        if unknown_dimensions:
+            names: str = ", ".join(sorted(unknown_dimensions))
+            raise ValueError(f"candidate contains unknown dimensions: {names}")
         return tuple(
             dimension.id
             for dimension in dimensions
@@ -175,7 +180,7 @@ class HypothesisEngine:
             every other observed value, or ``None`` for safe/baseline evidence.
 
         Raises:
-            StopIteration: If the record references a changed variable absent from
+            ValueError: If the candidate contains a dimension absent from
                 ``dimensions``.
         """
         if record.outcome.passed:
@@ -192,7 +197,7 @@ class HypothesisEngine:
             hypothesis_id=hypothesis_id,
             values=values,
             rationale=f"Falsify {hypothesis_id} by restoring '{variable}' while holding other conditions constant.",
-            expected_outcome=f"A safe result would weaken {hypothesis_id}; a failure would support interaction or another cause.",
+            expected_outcome=f"A safe result would support {hypothesis_id}; a failure would weaken it or indicate another cause.",
         )
 
     def to_dict(self) -> dict[str, Any]:
