@@ -1,6 +1,7 @@
-"""Deterministic safety patch strategies transforming controller logic into hardened fail-safe implementations."""
+"""Deterministic and AST safety patch strategies transforming controller logic into hardened implementations."""
 
 from __future__ import annotations
+import re
 from typing import Tuple
 
 from harness.models.patch import PatchStrategyType
@@ -23,12 +24,24 @@ class DynamicStoppingBufferPatcher:
         Returns:
             Tuple of (transformed_code, was_modified_boolean).
         """
-        if "7.0" in code and "safe_stopping_distance" in code:
-            patched = code.replace(
-                "safe_stopping_distance=7.0",
+        # Pattern 1: Constructor keyword argument
+        if re.search(r"safe_stopping_distance\s*=\s*[\d\.]+", code):
+            patched = re.sub(
+                r"safe_stopping_distance\s*=\s*[\d\.]+",
                 "safe_stopping_distance=13.0, emergency_distance=5.5",
+                code,
             )
             return patched, True
+
+        # Pattern 2: Stopping distance constant definition
+        if re.search(r"(SAFE_DISTANCE|STOPPING_DISTANCE|BRAKE_THRESHOLD)\s*=\s*[\d\.]+", code):
+            patched = re.sub(
+                r"(SAFE_DISTANCE|STOPPING_DISTANCE|BRAKE_THRESHOLD)\s*=\s*[\d\.]+",
+                r"\1 = 13.0",
+                code,
+            )
+            return patched, True
+
         return code, False
 
 
@@ -45,6 +58,24 @@ class StaleSensorFailSafePatcher:
         Returns:
             Tuple of (transformed_code, was_modified_boolean).
         """
+        # If code already has a step() method but lacks staleness checks, inject staleness guard at step start
+        if "def step(" in code and "get_max_observation_age" not in code and "obs_age" not in code:
+            staleness_guard = (
+                "    def step(self, current_sim_time: float) -> ActuatorCommand:\n"
+                "        # Invariant Guard: Emergency stop if observation delivery lag exceeds 350ms\n"
+                "        if hasattr(self, 'perception') and hasattr(self.perception, 'state'):\n"
+                "            if self.perception.state.get_max_observation_age(current_sim_time) > 0.35:\n"
+                "                return ActuatorCommand(throttle=0.0, brake=0.9, steering=0.0)\n"
+            )
+            patched = re.sub(
+                r"def step\s*\(\s*self\s*,\s*current_sim_time\s*(?::\s*float)?\s*\)\s*(?:->\s*ActuatorCommand)?\s*:",
+                staleness_guard.strip(),
+                code,
+                count=1,
+            )
+            if patched != code:
+                return patched, True
+
         return code, False
 
 

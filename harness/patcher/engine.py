@@ -1,12 +1,18 @@
-"""Autonomous code patcher orchestrating deterministic and AST safety transformations."""
+"""Autonomous code patcher orchestrating deterministic and AST safety transformations with provenance."""
 
 from __future__ import annotations
 import difflib
+import hashlib
 from typing import List, Optional, Tuple
 import uuid
 
 from harness.models.diagnostics import CausalDiagnosticReport
-from harness.models.patch import PatchResult, PatchStrategyType, PatchValidationStatus
+from harness.models.patch import (
+    PatchResult,
+    PatchStrategyType,
+    PatchValidationStatus,
+    PatchProvenance,
+)
 from harness.controllers.validator import ControllerValidator
 from harness.patcher.strategies import (
     DynamicStoppingBufferPatcher,
@@ -33,12 +39,14 @@ class AutoCodePatcher:
             strategy_override: Optional explicit strategy selection.
 
         Returns:
-            PatchResult containing original code, patched code, and unified diff.
+            PatchResult containing original code, patched code, provenance contract, and diff.
         """
         patch_id = f"patch_{uuid.uuid4().hex[:8]}"
         report_id = diagnostic_report.report_id if diagnostic_report else ""
 
         effective_original = original_code if original_code and original_code.strip() else "# Baseline reactive controller\n"
+        source_hash = hashlib.sha256(effective_original.encode("utf-8")).hexdigest()
+
         patched_code, strategies = cls._synthesize_hardened_code(
             original_code=original_code,
             strategy_override=strategy_override,
@@ -47,6 +55,24 @@ class AutoCodePatcher:
 
         unified_diff = cls._generate_diff(effective_original, patched_code)
         val_status, val_message = cls._validate_patch_syntax(patched_code)
+
+        evidence_ids: List[str] = []
+        if diagnostic_report:
+            for n in diagnostic_report.causal_nodes:
+                evidence_ids.extend(n.evidence_event_ids)
+
+        primary_strat = strategies[0] if strategies else PatchStrategyType.COMBINED_FAILSAFE_HARDENING
+        provenance = PatchProvenance(
+            source_controller_hash=source_hash,
+            diagnostic_report_id=report_id,
+            evidence_event_ids=evidence_ids,
+            strategy=primary_strat,
+            transformations_applied=[s.value for s in strategies],
+            rationale=(
+                f"Hardened controller logic applying {len(strategies)} safety invariant transformations "
+                f"to eliminate observation staleness delays and insufficient kinetic stopping margins."
+            ),
+        )
 
         return PatchResult(
             patch_id=patch_id,
@@ -57,6 +83,7 @@ class AutoCodePatcher:
             unified_diff=unified_diff,
             validation_status=val_status,
             validation_message=val_message,
+            provenance=provenance,
         )
 
     @classmethod
