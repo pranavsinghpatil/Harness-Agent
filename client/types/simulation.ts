@@ -43,6 +43,7 @@ export interface ActuatorCommand {
   throttle?: number;
   brake?: number;
   steering?: number;
+  emergency_stop?: boolean;
 }
 
 export interface HardwareMetrics {
@@ -51,6 +52,7 @@ export interface HardwareMetrics {
   is_throttled: boolean;
   deadline_misses: number;
   memory_used_mb?: number;
+  queue_depth?: number;
 }
 
 export interface Violation {
@@ -79,6 +81,7 @@ export interface TelemetryFrame {
   actuator_command: ActuatorCommand;
   hardware_metrics: HardwareMetrics;
   sensor_queue_depths: Record<string, number>;
+  active_faults?: string[];
   new_violations?: Violation[];
   dynamic_obstacles?: DynamicObstacle[];
 }
@@ -91,6 +94,8 @@ export interface RunManifest {
   termination_reason?: string;
   duration?: number;
   steps?: number;
+  sim_duration_seconds?: number;
+  total_steps?: number;
 }
 
 export interface RunDetailsResponse {
@@ -192,3 +197,30 @@ export interface HarnessEvaluation {
   verification_run?: HarnessRunData | null;
   final_result?: HarnessEvaluationResultData | null;
 }
+
+// WebSocket Stream Message Interfaces
+export interface WSFrameMessage {
+  type: "frame";
+  data: TelemetryFrame;
+  status: string;
+  is_finished: boolean;
+}
+
+export interface WSManifestMessage {
+  type: "manifest";
+  run_id: string;
+  status: string;
+  termination_reason?: string;
+  duration: number;
+  steps: number;
+  violations_count: number;
+  trace_hash: string;
+}
+
+export interface WSErrorMessage {
+  type?: "error";
+  error?: string;
+  message?: string;
+}
+
+export type WSStreamMessage = WSFrameMessage | WSManifestMessage | WSErrorMessage;
