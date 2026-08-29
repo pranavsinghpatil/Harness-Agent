@@ -44,6 +44,34 @@ def create_scenario(spec: dict[str, Any] | str) -> ScenarioDefinition:
     return scenario
 
 
+_SCENARIOS_LOADED = False
+
+def _ensure_scenarios_loaded() -> None:
+    """Ensure YAML scenarios from scenarios/ directory are loaded into registry."""
+    global _SCENARIOS_LOADED
+    if not _SCENARIOS_LOADED:
+        import glob
+        from pathlib import Path
+        base_dir = Path(__file__).resolve().parent.parent.parent
+        search_dirs = [
+            base_dir / "scenarios" / "templates",
+            base_dir / "scenarios" / "generated",
+            Path("scenarios/templates"),
+            Path("scenarios/generated"),
+        ]
+        for s_dir in search_dirs:
+            if s_dir.exists():
+                for yaml_file in s_dir.glob("*.yaml"):
+                    try:
+                        with open(yaml_file, "r", encoding="utf-8") as f:
+                            data = yaml.safe_load(f)
+                            if data and isinstance(data, dict) and "id" in data:
+                                create_scenario(data)
+                    except Exception:
+                        pass
+        _SCENARIOS_LOADED = True
+
+
 def get_scenario(scenario_id: str) -> Optional[ScenarioDefinition]:
     """Retrieves a registered scenario by ID from in-memory storage.
 
@@ -53,6 +81,7 @@ def get_scenario(scenario_id: str) -> Optional[ScenarioDefinition]:
     Returns:
         Optional[ScenarioDefinition]: The scenario definition if found, else None.
     """
+    _ensure_scenarios_loaded()
     return _SCENARIO_REGISTRY.get(scenario_id)
 
 
@@ -62,6 +91,7 @@ def list_scenarios() -> list[str]:
     Returns:
         list[str]: Registered scenario IDs.
     """
+    _ensure_scenarios_loaded()
     return list(_SCENARIO_REGISTRY.keys())
 
 
