@@ -8,11 +8,9 @@ from pydantic import BaseModel, Field
 SUPPORTED_FAULT_PARAMETERS: dict[tuple[str, str], frozenset[str]] = {
     ("sensor.lidar", "noise_burst"): frozenset({"scale"}),
     ("sensor.lidar", "bias_offset"): frozenset({"offset"}),
-    ("sensor.lidar", "sector_loss"): frozenset({"min_angle_rad", "max_angle_rad"}),
     ("sensor.lidar", "phantom_returns"): frozenset({"rate"}),
     ("sensor.camera", "frame_drop"): frozenset({"rate"}),
     ("sensor.camera", "confidence_degradation"): frozenset({"degradation"}),
-    ("sensor.position", "position_jump"): frozenset({"offset_x", "offset_y"}),
     ("transport.camera", "added_latency"): frozenset({"latency_ms"}),
     ("transport.camera", "packet_loss"): frozenset({"loss_rate"}),
     ("transport.camera", "jitter"): frozenset({"jitter_ms"}),
