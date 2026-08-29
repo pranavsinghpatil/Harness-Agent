@@ -5,13 +5,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.routes.scenarios import router as scenarios_router
 from backend.routes.telemetry import router as telemetry_router
+from backend.routes.harness import router as harness_router
 from backend.ws.live_stream import router as ws_router
 
 
 app = FastAPI(
-    title="Harness-Agent: Virtual Hardware Simulation Sandbox",
-    version="0.1.0",
-    description="Software-in-the-loop deterministic hardware-semantic testbed for AI agents.",
+    title="Harness-Agent: Virtual Hardware Simulation Sandbox & Agent Harness",
+    version="0.2.0",
+    description="Software-in-the-loop deterministic hardware testbed and reliability engineering harness.",
 )
 
 # Enable CORS for local dev visualizer (Vite / React)
@@ -28,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 
 app.include_router(scenarios_router)
 app.include_router(telemetry_router)
+app.include_router(harness_router)
 app.include_router(ws_router)
 
 

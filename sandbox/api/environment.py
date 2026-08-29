@@ -3,7 +3,7 @@
 from __future__ import annotations
 import math
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Dict, List, Optional
 from sandbox.core.clock import SimClock, EventQueue
 from sandbox.core.rng import RngManager
 from sandbox.core.episode import EpisodeLifecycle, EpisodeConfig, EpisodeStatus
@@ -12,6 +12,7 @@ from sandbox.world.entities import StaticObstacle, DynamicObstacle
 from sandbox.world.map import WorldMap
 from sandbox.physics.dynamics import VehicleState, VehicleParams
 from sandbox.physics.engine import PhysicsEngine
+from sandbox.physics.collision import CollisionResult
 from sandbox.sensors.base import BaseSensor
 from sandbox.sensors.lidar import LidarSensor
 from sandbox.sensors.imu import ImuSensor
@@ -24,7 +25,7 @@ from sandbox.hardware.profile import ComputeTask
 from sandbox.actuators.pipeline import ActuatorPipeline
 from sandbox.actuators.command import ActuatorCommand
 from sandbox.faults.controller import FaultController
-from sandbox.safety.oracle import SafetyOracle
+from sandbox.safety.oracle import SafetyOracle, SafetyViolation
 from sandbox.telemetry.recorder import TelemetryRecorder, TelemetryFrame
 from sandbox.telemetry.manifest import RunManifest
 from scenarios.schema import ScenarioDefinition
@@ -40,10 +41,12 @@ class SandboxEnvironment:
         scenario: ScenarioDefinition | None = None,
         target_agent: BaseTargetAgent | None = None,
         run_id: str | None = None,
+        event_listener: Optional[Callable[[str, str, str, Dict[str, Any]], None]] = None,
     ) -> None:
         self.run_id = run_id or f"run_{uuid.uuid4().hex[:8]}"
         self.scenario = scenario
         self.target_agent = target_agent or ReferenceAutonomousAgent()
+        self.event_listener = event_listener
 
         # 1. Core
         seed = scenario.seed if scenario else 42
@@ -93,9 +96,19 @@ class SandboxEnvironment:
         # 10. Telemetry Recorder
         self.telemetry = TelemetryRecorder(run_id=self.run_id)
 
-        # Apply scenario if provided
+        self._prev_deadline_misses: int = 0
+        self._prev_fault_ids: set[str] = set()
+
         if scenario:
             self.load_scenario(scenario)
+
+    def _emit(self, source: str, event_type: str, severity: str, payload: Dict[str, Any]) -> None:
+        """Internal dispatch to registered event listener."""
+        if self.event_listener:
+            try:
+                self.event_listener(source, event_type, severity, payload)
+            except Exception:
+                pass
 
     def _refresh_rng_bindings(self) -> None:
         """Re-binds fresh seed-isolated RNG generators to all sensors, transport, and actuators."""
@@ -121,7 +134,6 @@ class SandboxEnvironment:
         self.rng_manager.reset(scenario.seed)
         self._refresh_rng_bindings()
 
-        # Reset world map
         self.world_map = WorldMap(
             width=scenario.world.width,
             height=scenario.world.height,
@@ -129,7 +141,6 @@ class SandboxEnvironment:
         )
         self.physics = PhysicsEngine(self.world_map, self.vehicle_params)
 
-        # Add obstacles
         for obs_spec in scenario.world.obstacles:
             if obs_spec.type == "dynamic":
                 dyn_obs = DynamicObstacle(
@@ -152,7 +163,6 @@ class SandboxEnvironment:
                 )
                 self.world_map.add_static_obstacle(static_obs)
 
-        # Set initial vehicle state
         init_state = VehicleState(
             position=Vec2D(scenario.world.initial_state.x, scenario.world.initial_state.y),
             heading=scenario.world.initial_state.heading,
@@ -160,17 +170,14 @@ class SandboxEnvironment:
         )
         self.physics.reset(init_state)
 
-        # Set safety thresholds
         self.safety = SafetyOracle(
             min_clearance_threshold=scenario.safety_thresholds.get("min_clearance", 0.8),
             speed_limit=scenario.safety_thresholds.get("speed_limit", 6.5),
             max_observation_age_s=scenario.safety_thresholds.get("max_observation_age_s", 0.4),
         )
 
-        # Set faults
         self.faults.set_faults(scenario.fault_schedule)
 
-        # Reset target agent with true initial pose
         self.target_agent.reset(
             scenario.world.goal[0],
             scenario.world.goal[1],
@@ -195,6 +202,8 @@ class SandboxEnvironment:
         self.faults.reset()
         self.safety.reset()
         self.telemetry.reset(self.run_id)
+        self._prev_deadline_misses = 0
+        self._prev_fault_ids = set()
 
         if self.scenario:
             self.load_scenario(self.scenario)
@@ -205,12 +214,34 @@ class SandboxEnvironment:
             if sensor.should_sample(sim_time):
                 packet = sensor.sample(sim_time, vehicle_state, self.world_map)
                 if packet:
-                    self.transport.send(f"sensor.{sensor_key}", packet, sim_time)
+                    ch_name = f"sensor.{sensor_key}"
+                    sent = self.transport.send(ch_name, packet, sim_time)
+                    if sent:
+                        self._emit(
+                            f"sensors.{sensor_key}",
+                            "SENSOR_SAMPLED",
+                            "INFO",
+                            {"channel": ch_name, "seq_id": getattr(packet, "sequence_id", 0), "timestamp": sim_time},
+                        )
+                    else:
+                        self._emit(
+                            f"transport.{sensor_key}",
+                            "PACKET_DROPPED",
+                            "WARNING",
+                            {"channel": ch_name, "reason": "buffer_overflow_or_loss"},
+                        )
 
         delivered_by_channel = self.transport.deliver_all_due(sim_time)
         all_delivered = []
-        for packets in delivered_by_channel.values():
+        for ch_name, packets in delivered_by_channel.items():
             all_delivered.extend(packets)
+            if packets:
+                self._emit(
+                    f"transport.{ch_name}",
+                    "PACKET_DELIVERED",
+                    "INFO",
+                    {"channel": ch_name, "packet_count": len(packets)},
+                )
         return all_delivered
 
     def _check_termination(self, sim_time: float, vehicle_state: VehicleState, collision_res: CollisionResult) -> None:
@@ -227,6 +258,12 @@ class SandboxEnvironment:
                 EpisodeStatus.SAFETY_VIOLATION,
                 f"Collision with {collision_res.collided_entity_id}",
                 sim_time,
+            )
+            self._emit(
+                "physics.collision",
+                "COLLISION_DETECTED",
+                "CRITICAL",
+                {"obstacle_id": collision_res.collided_entity_id, "clearance": collision_res.min_clearance},
             )
         elif self.safety.has_fatal_violations and self.episode_config.terminate_on_safety_violation:
             self.lifecycle.finish(
@@ -293,6 +330,12 @@ class SandboxEnvironment:
         sim_time = self.clock.advance_by(dt)
 
         active_faults = self.faults.update(sim_time, self.sensors, self.transport, self.hardware, self.actuators)
+        active_set = set(active_faults)
+        newly_active = active_set - self._prev_fault_ids
+        for f_id in newly_active:
+            self._emit("faults.controller", "FAULT_INJECTED", "WARNING", {"fault_id": f_id, "sim_time": sim_time})
+        self._prev_fault_ids = active_set
+
         applied_cmd = self.actuators.step(sim_time)
         v_state, col_res = self.physics.step(
             applied_cmd.throttle, applied_cmd.brake, applied_cmd.steering, applied_cmd.emergency_stop, dt
@@ -301,19 +344,50 @@ class SandboxEnvironment:
         delivered_packets = self._sample_and_deliver_sensors(sim_time, v_state)
         self.hardware.step(sim_time, dt)
 
+        # Emit hardware scheduler events
+        if self.hardware.metrics.is_throttled:
+            self._emit(
+                "hardware.thermal",
+                "THERMAL_THROTTLED",
+                "WARNING",
+                {"temperature_celsius": self.hardware.metrics.temperature_celsius},
+            )
+        if self.hardware.metrics.total_deadline_misses > self._prev_deadline_misses:
+            delta = self.hardware.metrics.total_deadline_misses - self._prev_deadline_misses
+            self._prev_deadline_misses = self.hardware.metrics.total_deadline_misses
+            self._emit(
+                "hardware.scheduler",
+                "DEADLINE_MISSED",
+                "ERROR",
+                {"misses_delta": delta, "total_misses": self.hardware.metrics.total_deadline_misses},
+            )
+
         if delivered_packets:
             self.target_agent.receive_sensor_packets(delivered_packets, sim_time)
 
         agent_cmd = self.target_agent.step(sim_time)
         self.actuators.submit_command(agent_cmd, sim_time)
+        self._emit(
+            "agent.controller",
+            "COMMAND_ISSUED",
+            "INFO",
+            {"throttle": agent_cmd.throttle, "brake": agent_cmd.brake, "steering": agent_cmd.steering},
+        )
 
         obs_age = 0.0
         if hasattr(self.target_agent, "perception"):
             obs_age = self.target_agent.perception.state.get_max_observation_age(sim_time)
 
         violations = self.safety.evaluate(sim_time, v_state, self.vehicle_params, col_res, applied_cmd, obs_age)
-        self._check_termination(sim_time, v_state, col_res)
+        for v in violations:
+            self._emit(
+                "safety.oracle",
+                "INVARIANT_BREACHED",
+                "CRITICAL",
+                {"rule_name": v.rule_name, "severity": str(v.severity), "details": v.details},
+            )
 
+        self._check_termination(sim_time, v_state, col_res)
         return self._record_telemetry_frame(sim_time, v_state, applied_cmd, col_res, active_faults, violations)
 
     def run_episode(self, max_sim_time: float | None = None) -> tuple[RunManifest, list[TelemetryFrame]]:
