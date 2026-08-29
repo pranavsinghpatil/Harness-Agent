@@ -29,13 +29,9 @@ class ReliabilityEvaluationLoop:
         Returns:
             Fully populated HarnessEvaluation containing baseline, diagnosis, patch, verification run, and result.
         """
-        # Step 1: Initialize Evaluation
         evaluation = self.run_manager.create_evaluation(request)
-
-        # Step 2: Execute Baseline Run
         baseline_run = self.run_manager.execute_baseline(evaluation.evaluation_id)
 
-        # Step 3: If Baseline Passed (No Invariant Breaches and completed successfully), Finalize Result
         if not baseline_run.violations and baseline_run.status == HarnessRunStatus.COMPLETED:
             min_clearance = baseline_run.metrics.get("min_clearance", 2.0)
             evaluation.final_result = HarnessEvaluationResult(
@@ -51,19 +47,16 @@ class ReliabilityEvaluationLoop:
             )
             return evaluation
 
-        # Step 4: Causal Failure Diagnosis
         diagnostic_report = CausalTelemetryAnalyzer.analyze_run(baseline_run)
         diagnostic_report.evaluation_id = evaluation.evaluation_id
         evaluation.diagnosis = diagnostic_report
 
-        # Step 5: Autonomous Code Patching
         original_code = request.controller_code or ""
         patch_result = AutoCodePatcher.generate_patch(
             original_code=original_code, diagnostic_report=diagnostic_report
         )
         evaluation.patch = patch_result
 
-        # Step 6: Execute Verification on Identical Seed & Fault Schedule
         self.run_manager.execute_verification(
             evaluation_id=evaluation.evaluation_id,
             patched_code=patch_result.patched_code,
