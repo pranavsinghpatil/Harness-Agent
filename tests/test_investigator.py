@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any
 from types import SimpleNamespace
 
+import pytest
+
+from backend.routes.harness import InvestigationPayload
 from harness.investigator import AutonomousInvestigator, InvestigatorConfig
 from harness.planning import ExperimentOutcome
 from harness.models.evaluation import ControllerHealth, EvaluationRequest, HarnessRun, HarnessRunStatus
@@ -101,6 +104,11 @@ def test_exact_lower_limit_is_complete_when_planner_has_no_next_candidate() -> N
 
     assert len(result["runs"]) == 5
     assert result["status"] == "COMPLETE"
+
+
+def test_investigation_payload_rejects_whitespace_objective() -> None:
+    with pytest.raises(ValueError, match="must not be blank"):
+        InvestigationPayload(objective="   \t")
 
 
 def test_incomplete_completed_run_is_not_passing_evidence() -> None:
