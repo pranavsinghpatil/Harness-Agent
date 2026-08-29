@@ -9,6 +9,7 @@ from typing import Any, Optional
 from harness.models.evaluation import (
     ControllerHealth,
     EvaluationRequest,
+    HarnessEvaluation,
     HarnessRun,
     HarnessRunStatus,
 )
@@ -143,7 +144,7 @@ class AutonomousInvestigator:
                     "experiment_phase": candidate.phase.value,
                 },
             )
-            evaluation: Any = self.run_manager.create_evaluation(request)
+            evaluation: HarnessEvaluation = self.run_manager.create_evaluation(request)
             evaluation_id = evaluation.evaluation_id
             run = self.run_manager.execute_baseline(evaluation_id)
             outcome: ExperimentOutcome = self._to_outcome(run)
