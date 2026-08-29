@@ -159,7 +159,20 @@ class AutonomousInvestigator:
         return result
 
     def run(self, max_experiments: Optional[int] = None) -> AutonomousInvestigator:
-        """Execute candidates until the configured budget or optional limit."""
+        """Execute candidates until the configured budget or optional lower limit.
+
+        Args:
+            max_experiments: Optional absolute experiment count at which this call
+                should stop. Values at or above the configured budget do not create
+                a caller-limited result.
+
+        Returns:
+            This investigator instance after all runnable candidates for this call
+            have been executed.
+
+        Raises:
+            ValueError: If ``max_experiments`` is provided and is less than one.
+        """
         initial_planned_count: int = self.planner.planned_count
         limit: int = self.config.budget
         if max_experiments is not None:
@@ -174,7 +187,10 @@ class AutonomousInvestigator:
                 break
             self._execute_candidate(candidate)
         if max_experiments is not None and initial_planned_count < limit:
-            self._last_run_was_caller_limited = self.planner.planned_count >= limit
+            self._last_run_was_caller_limited = (
+                max_experiments < self.config.budget
+                and self.planner.planned_count >= limit
+            )
         elif max_experiments is None:
             self._last_run_was_caller_limited = False
         return self
