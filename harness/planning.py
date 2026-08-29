@@ -8,9 +8,35 @@ ordering, or evidence integrity.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, Mapping, Optional
+
+
+def _freeze_value(value: Any) -> Any:
+    """Recursively convert mutable containers into immutable snapshots."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_freeze_value(item) for item in value)
+    return deepcopy(value)
+
+
+def _thaw_value(value: Any) -> Any:
+    """Convert immutable evidence containers back to JSON-compatible values."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_value(item) for item in value]
+    if isinstance(value, frozenset):
+        return sorted(_thaw_value(item) for item in value)
+    return deepcopy(value)
 
 
 class ExperimentPhase(str, Enum):
@@ -60,6 +86,9 @@ class ExperimentCandidate:
     rationale: str
     parent_experiment_ids: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", _freeze_value(self.values))
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize a candidate for APIs, MCP, and audit logs."""
         return {
@@ -84,6 +113,7 @@ class ExperimentOutcome:
     def __post_init__(self) -> None:
         if self.violation_count < 0:
             raise ValueError("violation_count must not be negative")
+        object.__setattr__(self, "details", _freeze_value(self.details))
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize outcome without losing quantitative evidence."""
@@ -92,7 +122,7 @@ class ExperimentOutcome:
             "violation_count": self.violation_count,
             "min_clearance": self.min_clearance,
             "trace_hash": self.trace_hash,
-            "details": dict(self.details),
+            "details": _thaw_value(self.details),
         }
 
 
@@ -124,7 +154,21 @@ class EvidenceLedger:
         """Record one completed experiment exactly once."""
         if candidate.experiment_id in self._experiment_ids:
             raise ValueError(f"Experiment '{candidate.experiment_id}' already has evidence")
-        record = EvidenceRecord(candidate=candidate, outcome=outcome)
+        candidate_snapshot: ExperimentCandidate = ExperimentCandidate(
+            experiment_id=candidate.experiment_id,
+            values=dict(candidate.values),
+            phase=candidate.phase,
+            rationale=candidate.rationale,
+            parent_experiment_ids=candidate.parent_experiment_ids,
+        )
+        outcome_snapshot: ExperimentOutcome = ExperimentOutcome(
+            passed=outcome.passed,
+            violation_count=outcome.violation_count,
+            min_clearance=outcome.min_clearance,
+            trace_hash=outcome.trace_hash,
+            details=_thaw_value(outcome.details),
+        )
+        record = EvidenceRecord(candidate=candidate_snapshot, outcome=outcome_snapshot)
         self._records.append(record)
         self._experiment_ids.add(candidate.experiment_id)
         return record
@@ -141,10 +185,18 @@ class EvidenceLedger:
         return any(not record.outcome.passed for record in self._records)
 
     def summary(self, dimensions: list[PlannerDimension]) -> dict[str, Any]:
-        """Produce a compact status summary suitable for a UI or agent."""
-        dimension_ids = [dimension.id for dimension in dimensions]
-        baselines = {dimension.id: dimension.baseline for dimension in dimensions}
-        tested = {
+        """Produce a compact status summary suitable for a UI or agent.
+
+        Args:
+            dimensions: Planner dimensions used to calculate tested and unproven IDs.
+
+        Returns:
+            A mapping containing counts, tested/unproven dimension IDs, and serialized
+            evidence records. The ledger is not modified and no exceptions are raised.
+        """
+        dimension_ids: list[str] = [dimension.id for dimension in dimensions]
+        baselines: dict[str, float] = {dimension.id: dimension.baseline for dimension in dimensions}
+        tested: set[str] = {
             dimension_id
             for record in self._records
             for dimension_id in dimension_ids
@@ -171,6 +223,21 @@ class ExperimentPlanner:
         seed: int = 1337,
         max_boundary_steps: int = 3,
     ) -> None:
+        """Create a deterministic, budgeted planner for bounded experiments.
+
+        Args:
+            dimensions: Unique bounded perturbation dimensions to screen and refine.
+            budget: Maximum number of experiments that may be reserved.
+            seed: Stable seed recorded with the planner for reproducible decisions.
+            max_boundary_steps: Maximum binary refinements per failed dimension.
+
+        Returns:
+            None. Initializes an empty evidence ledger and planner state.
+
+        Raises:
+            ValueError: If dimensions are empty or duplicate, budget is less than one,
+                or the boundary-step limit is negative.
+        """
         if not dimensions:
             raise ValueError("at least one planner dimension is required")
         if len({dimension.id for dimension in dimensions}) != len(dimensions):
@@ -180,13 +247,13 @@ class ExperimentPlanner:
         if max_boundary_steps < 0:
             raise ValueError("max_boundary_steps must not be negative")
 
-        self.dimensions = tuple(dimensions)
-        self.budget = budget
-        self.seed = seed
-        self.max_boundary_steps = max_boundary_steps
-        self.ledger = EvidenceLedger()
+        self.dimensions: tuple[PlannerDimension, ...] = tuple(dimensions)
+        self.budget: int = budget
+        self.seed: int = seed
+        self.max_boundary_steps: int = max_boundary_steps
+        self.ledger: EvidenceLedger = EvidenceLedger()
         self._planned: dict[str, ExperimentCandidate] = {}
-        self._next_sequence = 1
+        self._next_sequence: int = 1
 
     @property
     def planned_count(self) -> int:
@@ -235,7 +302,7 @@ class ExperimentPlanner:
             if record.candidate.phase != ExperimentPhase.BOUNDARY:
                 continue
             changed_value = record.candidate.values.get(dimension.id)
-            if changed_value is None:
+            if changed_value is None or changed_value == dimension.baseline:
                 continue
             steps += 1
             if record.outcome.passed:
