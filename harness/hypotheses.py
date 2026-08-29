@@ -142,13 +142,14 @@ class HypothesisEngine:
             All hypotheses after this observation, sorted by stable ID.
 
         Raises:
-            ValueError: If the same experiment is observed twice.
+            ValueError: If the same experiment is observed twice or the candidate
+                contains a dimension absent from ``dimensions``.
         """
         experiment_id: str = record.candidate.experiment_id
         if experiment_id in self._observed:
             raise ValueError(f"Experiment '{experiment_id}' already observed")
-        self._observed.add(experiment_id)
         variables: tuple[str, ...] = self._changed_variables(record, dimensions)
+        self._observed.add(experiment_id)
         if not variables or record.candidate.phase == ExperimentPhase.BASELINE:
             return self.hypotheses
         key_variables: tuple[str, ...] = variables

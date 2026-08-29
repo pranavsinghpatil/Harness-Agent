@@ -94,3 +94,11 @@ def test_unknown_candidate_dimension_fails_fast() -> None:
         assert "unknown dimensions" in str(exc)
     else:
         raise AssertionError("unknown dimensions should be rejected")
+
+    corrected: EvidenceRecord = _record(
+        "exp_001",
+        {"camera.latency_ms": 400.0, "compute.availability": 1.0},
+        False,
+    )
+    hypotheses: tuple[Hypothesis, ...] = engine.observe(corrected, DIMENSIONS)
+    assert hypotheses[0].hypothesis_id == "H-camera_latency_ms"
