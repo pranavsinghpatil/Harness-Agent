@@ -110,6 +110,9 @@ def test_investigation_payload_rejects_whitespace_objective() -> None:
     with pytest.raises(ValueError, match="must not be blank"):
         InvestigationPayload(objective="   \t")
 
+    with pytest.raises(ValueError, match="must be a string"):
+        InvestigationPayload(objective=None)
+
 
 def test_incomplete_completed_run_is_not_passing_evidence() -> None:
     run: HarnessRun = HarnessRun(

@@ -44,10 +44,12 @@ class InvestigationPayload(BaseModel):
     budget: int = Field(default=12, ge=1, le=100, description="Maximum number of experiments")
     max_boundary_steps: int = Field(default=3, ge=0, le=10, description="Maximum binary refinements per failed dimension")
 
-    @field_validator("objective")
+    @field_validator("objective", mode="before")
     @classmethod
-    def validate_objective(cls, value: str) -> str:
+    def validate_objective(cls, value: object) -> str:
         """Reject blank objectives as a client validation error."""
+        if not isinstance(value, str):
+            raise ValueError("objective must be a string")
         normalized: str = value.strip()
         if not normalized:
             raise ValueError("objective must not be blank")
