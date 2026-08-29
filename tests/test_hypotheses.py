@@ -54,3 +54,27 @@ def test_safe_only_screen_does_not_create_refuted_hypothesis() -> None:
 
     assert engine.hypotheses == ()
     assert engine.strongest() is None
+
+
+def test_safe_interaction_contradicts_matching_interaction_hypothesis() -> None:
+    engine: HypothesisEngine = HypothesisEngine()
+    failed: EvidenceRecord = _record(
+        "exp_001",
+        {"camera.latency_ms": 400.0, "compute.availability": 0.4},
+        False,
+        ExperimentPhase.INTERACTION,
+    )
+    safe: EvidenceRecord = _record(
+        "exp_002",
+        {"camera.latency_ms": 400.0, "compute.availability": 0.4},
+        True,
+        ExperimentPhase.INTERACTION,
+    )
+
+    engine.observe(failed, DIMENSIONS)
+    engine.observe(safe, DIMENSIONS)
+
+    hypothesis: Hypothesis | None = engine.strongest()
+    assert hypothesis is not None
+    assert hypothesis.hypothesis_id == "H-camera_latency_ms+compute_availability"
+    assert hypothesis.contradicting_experiment_ids == ("exp_002",)
