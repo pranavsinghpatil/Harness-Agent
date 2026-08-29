@@ -71,6 +71,21 @@ def test_investigator_limits_a_short_run_without_spending_remaining_budget() -> 
     assert result["planner"]["budget"] == 10
     assert result["status"] == "PARTIAL"
 
+    repeated_result: dict[str, Any] = investigator.run(max_experiments=1).to_dict()
+    assert repeated_result["status"] == "PARTIAL"
+
+
+def test_noop_limit_does_not_downgrade_exhausted_investigation() -> None:
+    investigator: AutonomousInvestigator = AutonomousInvestigator(
+        InvestigatorConfig(objective="Exhaust the configured budget.", budget=1),
+        run_manager=FakeRunManager(),
+    )
+    investigator.run()
+
+    result: dict[str, Any] = investigator.run(max_experiments=1).to_dict()
+
+    assert result["status"] == "BUDGET_EXHAUSTED"
+
 
 def test_incomplete_completed_run_is_not_passing_evidence() -> None:
     run: HarnessRun = HarnessRun(

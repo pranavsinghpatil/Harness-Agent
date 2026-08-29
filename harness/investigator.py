@@ -90,6 +90,7 @@ class AutonomousInvestigator:
         )
         self._runs: list[InvestigationRun] = []
         self._last_run_limit: Optional[int] = None
+        self._last_run_was_caller_limited: bool = False
 
     @staticmethod
     def _to_outcome(run: HarnessRun) -> ExperimentOutcome:
@@ -159,7 +160,8 @@ class AutonomousInvestigator:
 
     def run(self, max_experiments: Optional[int] = None) -> AutonomousInvestigator:
         """Execute candidates until the configured budget or optional limit."""
-        limit = self.config.budget
+        initial_planned_count: int = self.planner.planned_count
+        limit: int = self.config.budget
         if max_experiments is not None:
             if max_experiments < 1:
                 raise ValueError("max_experiments must be at least 1")
@@ -171,17 +173,17 @@ class AutonomousInvestigator:
             if candidate is None:
                 break
             self._execute_candidate(candidate)
+        if max_experiments is not None and initial_planned_count < limit:
+            self._last_run_was_caller_limited = self.planner.planned_count >= limit
+        elif max_experiments is None:
+            self._last_run_was_caller_limited = False
         return self
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the complete investigation, including explicit unknowns."""
         planner_status = self.planner.status()
         records = self.planner.ledger.records
-        caller_limited: bool = (
-            self._last_run_limit is not None
-            and self._last_run_limit < self.config.budget
-            and self.planner.planned_count >= self._last_run_limit
-        )
+        caller_limited: bool = self._last_run_was_caller_limited
         if caller_limited:
             status: str = "PARTIAL"
         elif self.planner.planned_count >= self.config.budget:
