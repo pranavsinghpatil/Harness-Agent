@@ -15,7 +15,14 @@ class DynamicStoppingBufferPatcher:
 
     @classmethod
     def apply(cls, code: str) -> Tuple[str, bool]:
-        """Apply dynamic stopping buffer patch."""
+        """Apply dynamic stopping buffer patch to controller source text.
+
+        Args:
+            code: Original controller Python source code.
+
+        Returns:
+            Tuple of (transformed_code, was_modified_boolean).
+        """
         if "7.0" in code and "safe_stopping_distance" in code:
             patched = code.replace(
                 "safe_stopping_distance=7.0",
@@ -30,7 +37,14 @@ class StaleSensorFailSafePatcher:
 
     @classmethod
     def apply(cls, code: str) -> Tuple[str, bool]:
-        """Apply stale sensor fail-safe patch."""
+        """Apply stale sensor fail-safe patch to controller source text.
+
+        Args:
+            code: Original controller Python source code.
+
+        Returns:
+            Tuple of (transformed_code, was_modified_boolean).
+        """
         return code, False
 
 
@@ -46,13 +60,18 @@ class HardenedAutonomousAgent(ReferenceAutonomousAgent):
         )
 
     def step(self, current_sim_time: float) -> ActuatorCommand:
-        """Execute hardened step with observation staleness guard and dynamic safety margins."""
-        # 1. Observation Staleness Guard (Fail-Safe if sensor lag > 350ms)
+        """Execute hardened step with observation staleness guard and dynamic safety margins.
+
+        Args:
+            current_sim_time: Active simulation timestamp in seconds.
+
+        Returns:
+            ActuatorCommand commanding throttle, brake, and steering.
+        """
         obs_age = self.perception.state.get_max_observation_age(current_sim_time)
         if obs_age > 0.35:
             return ActuatorCommand(throttle=0.0, brake=0.9, steering=0.0)
 
-        # 2. Multi-Sensor Obstacle Proximity Check from PerceptionState
         min_camera_dist = float("inf")
         for det in self.perception.state.latest_camera_detections:
             if det.get("confidence", 0) > 0.4:
@@ -61,8 +80,6 @@ class HardenedAutonomousAgent(ReferenceAutonomousAgent):
                     min_camera_dist = d
 
         closest_obs = min(self.perception.state.latest_lidar_min_range, min_camera_dist)
-
-        # 3. Dynamic Obstacle Proximity Braking Guard
         if closest_obs < 6.5:
             return ActuatorCommand(throttle=0.0, brake=0.85, steering=0.0)
 
@@ -95,12 +112,10 @@ class HardenedAutonomousAgent(ReferenceAutonomousAgent):
         )
 
     def step(self, current_sim_time: float) -> ActuatorCommand:
-        # 1. Observation Staleness Guard (Fail-Safe if sensor lag > 350ms)
         obs_age = self.perception.state.get_max_observation_age(current_sim_time)
         if obs_age > 0.35:
             return ActuatorCommand(throttle=0.0, brake=0.9, steering=0.0)
 
-        # 2. Multi-Sensor Obstacle Proximity Check from PerceptionState
         min_camera_dist = float("inf")
         for det in self.perception.state.latest_camera_detections:
             if det.get("confidence", 0) > 0.4:
@@ -109,7 +124,6 @@ class HardenedAutonomousAgent(ReferenceAutonomousAgent):
                     min_camera_dist = d
 
         closest_obs = min(self.perception.state.latest_lidar_min_range, min_camera_dist)
-
         if closest_obs < 6.5:
             return ActuatorCommand(throttle=0.0, brake=0.85, steering=0.0)
 

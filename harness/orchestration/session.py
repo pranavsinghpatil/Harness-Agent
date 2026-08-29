@@ -6,6 +6,7 @@ import time
 
 from sandbox.api.environment import SandboxEnvironment
 from scenarios.schema import ScenarioDefinition
+from sandbox.faults.schema import FaultDefinition
 from target_agents.base import BaseTargetAgent
 from harness.hardware.presets import HardwarePreset
 from harness.hardware.adapter import HardwareAdapter
@@ -24,6 +25,7 @@ class SandboxSession:
         hardware_preset: HardwarePreset,
         target_agent: BaseTargetAgent,
         seed: Optional[int] = None,
+        chaos_fault_overrides: Optional[List[Dict[str, Any]]] = None,
         event_callback: Optional[Callable[[HarnessEvent], None]] = None,
     ) -> None:
         self.evaluation_id = evaluation_id
@@ -32,11 +34,19 @@ class SandboxSession:
         self.hardware_preset = hardware_preset
         self.target_agent = target_agent
         self.seed = seed if seed is not None else (scenario.seed if scenario else 42)
+        self.chaos_fault_overrides = chaos_fault_overrides
         self.event_callback = event_callback
 
         sc_copy = scenario.model_copy(deep=True) if scenario else None
         if sc_copy and seed is not None:
             sc_copy.seed = seed
+
+        if sc_copy and chaos_fault_overrides:
+            for fault_dict in chaos_fault_overrides:
+                try:
+                    sc_copy.fault_schedule.append(FaultDefinition(**fault_dict))
+                except Exception:
+                    pass
 
         self._env = SandboxEnvironment(
             scenario=sc_copy,
@@ -57,20 +67,16 @@ class SandboxSession:
         wall_start = time.time()
         effective_max_time = max_sim_time or (self.scenario.max_sim_time if self.scenario else 30.0)
 
-        # 1. Apply hardware preset compute and transport latencies
         HardwareAdapter.apply_preset(self._env, self.hardware_preset)
-
         self._emit_event(
             HarnessEventType.SIMULATION_STARTED,
             f"Simulation run '{self.run_id}' started with seed {self.seed}.",
             {"hardware": self.hardware_preset.id, "scenario": self.scenario.id if self.scenario else "custom"},
         )
 
-        # 2. Run simulation episode
         manifest, frames = self._env.run_episode(max_sim_time=effective_max_time)
         wall_duration = time.time() - wall_start
 
-        # 3. Determine run outcome
         fatal_violations = [
             v for v in self._env.safety.violations
             if getattr(v.severity, "value", str(v.severity)).lower() in ("fatal", "critical")
@@ -81,29 +87,14 @@ class SandboxSession:
             else HarnessRunStatus.COMPLETED
         )
 
-        # 4. Emit safety events for any recorded violations
-        for v in self._env.safety.violations:
-            self._emit_event(
-                HarnessEventType.INVARIANT_BREACHED,
-                v.description,
-                {"rule_name": v.rule_name, "severity": str(v.severity), "details": v.details},
-                severity=EventSeverity.CRITICAL,
-            )
-
+        self._emit_violation_events()
         self._emit_event(
             HarnessEventType.SIMULATION_TERMINATED,
             f"Simulation run '{self.run_id}' finished with status: {status.value}.",
             {"status": status.value, "sim_time": manifest.sim_duration_seconds, "violations_count": manifest.violations_count},
         )
 
-        # Compute summary metrics from recorded telemetry frames
-        speeds = [
-            (f.vehicle_state.get("velocity", 0.0) if isinstance(f.vehicle_state, dict) else getattr(f.vehicle_state, "velocity", 0.0))
-            for f in frames
-        ] if frames else [0.0]
-        min_clearance = min([f.min_clearance for f in frames]) if frames else 0.0
-        max_speed = max(speeds)
-        avg_speed = sum(speeds) / len(speeds)
+        metrics = self._calculate_telemetry_metrics(frames, manifest.violations_count)
 
         return HarnessRun(
             run_id=self.run_id,
@@ -116,13 +107,32 @@ class SandboxSession:
             telemetry_frames=list(frames),
             events=list(self._events),
             violations=list(self._env.safety.violations),
-            metrics={
-                "min_clearance": min_clearance,
-                "max_speed": max_speed,
-                "avg_speed": avg_speed,
-                "violations_count": manifest.violations_count,
-            },
+            metrics=metrics,
         )
+
+    def _emit_violation_events(self) -> None:
+        """Broadcasts INVARIANT_BREACHED events for all recorded violations."""
+        for v in self._env.safety.violations:
+            self._emit_event(
+                HarnessEventType.INVARIANT_BREACHED,
+                v.description,
+                {"rule_name": v.rule_name, "severity": str(v.severity), "details": v.details},
+                severity=EventSeverity.CRITICAL,
+            )
+
+    def _calculate_telemetry_metrics(self, frames: List[Any], violations_count: int) -> Dict[str, Any]:
+        """Aggregates kinematic velocity and clearance metrics from telemetry frames."""
+        speeds = [
+            (f.vehicle_state.get("velocity", 0.0) if isinstance(f.vehicle_state, dict) else getattr(f.vehicle_state, "velocity", 0.0))
+            for f in frames
+        ] if frames else [0.0]
+
+        return {
+            "min_clearance": min([f.min_clearance for f in frames]) if frames else 0.0,
+            "max_speed": max(speeds),
+            "avg_speed": sum(speeds) / len(speeds),
+            "violations_count": violations_count,
+        }
 
     def _emit_event(
         self,

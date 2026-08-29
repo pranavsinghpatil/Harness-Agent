@@ -20,7 +20,7 @@ from harness.tools.canonical_tools import (
 class MCPServerHandler:
     """Dispatches JSON-RPC requests for MCP tools."""
 
-    TOOLS_MANIFEST = [
+    TOOLS_MANIFEST: List[Dict[str, Any]] = [
         {
             "name": "list_hardware_profiles",
             "description": "List all target edge hardware presets (e.g. D-Robotics RDK X5, NVIDIA Jetson Orin Nano, Raspberry Pi 5).",
@@ -102,7 +102,18 @@ class MCPServerHandler:
 
     @classmethod
     def handle_call(cls, tool_name: str, arguments: Dict[str, Any]) -> Any:
-        """Dispatch tool call to canonical Python implementation."""
+        """Dispatch tool call to canonical Python implementation.
+
+        Args:
+            tool_name: Registered name of the tool to execute.
+            arguments: Dictionary of arguments conforming to tool's inputSchema.
+
+        Returns:
+            Any: Serialized tool execution result dictionary or list.
+
+        Raises:
+            ValueError: If tool_name is unrecognized or required arguments are missing.
+        """
         if tool_name == "list_hardware_profiles":
             return list_hardware_profiles()
         elif tool_name == "inspect_scenario":
@@ -135,10 +146,18 @@ class MCPServerHandler:
 
 
 def run_stdio_server() -> None:
-    """Run JSON-RPC stdio loop for MCP clients."""
+    """Run JSON-RPC stdio loop for MCP clients.
+
+    Reads newline-delimited JSON-RPC request objects from sys.stdin, dispatches
+    matching tool calls, and writes JSON-RPC 2.0 response objects to sys.stdout.
+
+    Side Effects:
+        Reads standard input and writes standard output until EOF.
+    """
     for line in sys.stdin:
         if not line.strip():
             continue
+        msg_id: Optional[Any] = None
         try:
             req = json.loads(line)
             method = req.get("method")
@@ -148,7 +167,7 @@ def run_stdio_server() -> None:
                 response = {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": MCPServerHandler.TOOLS_MANIFEST}}
             elif method == "tools/call":
                 params = req.get("params", {})
-                tool_name = params.get("name")
+                tool_name = params.get("name", "")
                 args = params.get("arguments", {})
                 result = MCPServerHandler.handle_call(tool_name, args)
                 response = {"jsonrpc": "2.0", "id": msg_id, "result": {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]}}
@@ -158,7 +177,7 @@ def run_stdio_server() -> None:
             sys.stdout.write(json.dumps(response) + "\n")
             sys.stdout.flush()
         except Exception as e:
-            err_resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32000, "message": str(e)}}
+            err_resp = {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32000, "message": str(e)}}
             sys.stdout.write(json.dumps(err_resp) + "\n")
             sys.stdout.flush()
 
