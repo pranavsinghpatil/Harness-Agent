@@ -9,6 +9,7 @@ import {
   Violation,
 } from "../types/simulation";
 import { getScenarios, runScenario, replayRun, checkHealth } from "../lib/api";
+import { SimulationStreamClient } from "../lib/websocket";
 import { Header } from "../components/Header";
 import { ScenarioControls } from "../components/ScenarioControls";
 import { SimulationCanvas } from "../components/SimulationCanvas";
@@ -26,6 +27,7 @@ export default function Home() {
   const [seed, setSeed] = useState<number>(1337);
   const [maxSimTime, setMaxSimTime] = useState<number>(12);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
+  const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [backendConnected, setBackendConnected] = useState<boolean>(false);
   const [simStatusText, setSimStatusText] = useState<string>("READY");
@@ -41,6 +43,7 @@ export default function Home() {
   const [latestViolation, setLatestViolation] = useState<Violation | null>(null);
 
   const animationTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const streamClientRef = useRef<SimulationStreamClient | null>(null);
 
   // Fetch scenarios and check backend connection
   const loadScenarios = useCallback(async (base: string) => {
@@ -64,8 +67,22 @@ export default function Home() {
     loadScenarios(apiBase);
   }, [apiBase, loadScenarios]);
 
+  // Clean up streaming on unmount
+  useEffect(() => {
+    return () => {
+      if (streamClientRef.current) {
+        streamClientRef.current.disconnect();
+      }
+    };
+  }, []);
+
   // Scenario change handler
   const handleSelectScenario = (scId: string) => {
+    if (streamClientRef.current) {
+      streamClientRef.current.disconnect();
+      setIsStreaming(false);
+    }
+
     const sc = scenarios.find((s) => s.id === scId);
     if (sc) {
       setSelectedScenario(sc);
@@ -82,9 +99,86 @@ export default function Home() {
     }
   };
 
-  // Run scenario episode
+  // 1. Real-Time WebSocket Streaming Handler
+  const handleStartStreaming = () => {
+    if (!selectedScenario) return;
+
+    if (streamClientRef.current) {
+      streamClientRef.current.disconnect();
+    }
+
+    setIsPlaying(false);
+    setIsStreaming(true);
+    setCurrentRunFrames([]);
+    setCurrentFrameIdx(0);
+    setCurrentManifest(null);
+    setReplayResult(null);
+    setLatestViolation(null);
+    setSimStatusText("STREAMING LIVE");
+    setSimStatusClass("text-cyan-400 font-bold");
+
+    const client = new SimulationStreamClient(apiBase, selectedScenario.id, {
+      onFrame: (frame, status) => {
+        setCurrentRunFrames((prev) => {
+          const next = [...prev, frame];
+          setCurrentFrameIdx(next.length - 1);
+          return next;
+        });
+
+        if (frame.new_violations && frame.new_violations.length > 0) {
+          setLatestViolation(frame.new_violations[0]);
+        }
+
+        const isViolation = status.toLowerCase().includes("violation");
+        setSimStatusText(status);
+        setSimStatusClass(
+          isViolation ? "text-rose-400 font-bold" : "text-cyan-400 font-bold"
+        );
+      },
+      onManifest: (manifest) => {
+        setCurrentManifest(manifest);
+        setIsStreaming(false);
+        const hasViolations = (manifest.violations_count ?? 0) > 0;
+        setSimStatusText(manifest.status);
+        setSimStatusClass(
+          hasViolations || manifest.status.toLowerCase().includes("violation")
+            ? "text-rose-400 font-bold"
+            : "text-emerald-400 font-bold"
+        );
+      },
+      onError: (errorMsg) => {
+        setIsStreaming(false);
+        setSimStatusText("STREAM ERROR");
+        setSimStatusClass("text-rose-500 font-bold");
+        alert(`WebSocket Stream error: ${errorMsg}`);
+      },
+      onClose: () => {
+        setIsStreaming(false);
+      },
+    });
+
+    streamClientRef.current = client;
+    client.connect();
+  };
+
+  const handleStopStreaming = () => {
+    if (streamClientRef.current) {
+      streamClientRef.current.disconnect();
+      streamClientRef.current = null;
+    }
+    setIsStreaming(false);
+    setSimStatusText("STREAM STOPPED");
+    setSimStatusClass("text-amber-400 font-semibold");
+  };
+
+  // 2. Batch Run Simulation Handler (REST)
   const handleRunScenario = async () => {
     if (!selectedScenario) return;
+    if (streamClientRef.current) {
+      streamClientRef.current.disconnect();
+      setIsStreaming(false);
+    }
+
     setIsSimulating(true);
     setSimStatusText("SIMULATING...");
     setSimStatusClass("text-amber-400");
@@ -110,7 +204,7 @@ export default function Home() {
           : "text-emerald-400 font-bold"
       );
 
-      // Start playback automatically
+      // Start playback automatically for batch run
       setIsPlaying(true);
     } catch (err: unknown) {
       console.error("Simulation run error:", err);
@@ -122,7 +216,7 @@ export default function Home() {
     }
   };
 
-  // Deterministic replay
+  // 3. Deterministic Replay Handler
   const handleReplayRun = async () => {
     if (!currentManifest) return;
     setIsVerifying(true);
@@ -147,18 +241,18 @@ export default function Home() {
     }
   };
 
-  // Playback Loop
+  // Playback Loop for recorded runs
   useEffect(() => {
     if (animationTimerRef.current) {
       clearInterval(animationTimerRef.current);
       animationTimerRef.current = null;
     }
 
-    if (!isPlaying || currentRunFrames.length === 0) {
+    if (!isPlaying || currentRunFrames.length === 0 || isStreaming) {
       return;
     }
 
-    // 50Hz base update rate = 20ms per frame. Adjusted by playbackSpeed.
+    // 50Hz base update rate = 20ms per frame modulated by speed
     const intervalMs = Math.max(4, Math.round(20 / playbackSpeed));
 
     animationTimerRef.current = setInterval(() => {
@@ -176,7 +270,7 @@ export default function Home() {
         clearInterval(animationTimerRef.current);
       }
     };
-  }, [isPlaying, currentRunFrames.length, playbackSpeed]);
+  }, [isPlaying, currentRunFrames.length, playbackSpeed, isStreaming]);
 
   // Sync violation detection on current frame
   const currentFrame = currentRunFrames[currentFrameIdx] ?? null;
@@ -190,7 +284,7 @@ export default function Home() {
   }, [currentFrame]);
 
   const handlePlayPauseToggle = () => {
-    if (currentRunFrames.length === 0) return;
+    if (currentRunFrames.length === 0 || isStreaming) return;
     if (currentFrameIdx >= currentRunFrames.length - 1) {
       setCurrentFrameIdx(0);
       setIsPlaying(true);
@@ -200,6 +294,7 @@ export default function Home() {
   };
 
   const handleScrub = (idx: number) => {
+    if (isStreaming) return;
     setIsPlaying(false);
     setCurrentFrameIdx(idx);
   };
@@ -242,8 +337,11 @@ export default function Home() {
                 maxSimTime={maxSimTime}
                 onMaxSimTimeChange={setMaxSimTime}
                 onRunScenario={handleRunScenario}
+                onStartStreaming={handleStartStreaming}
+                onStopStreaming={handleStopStreaming}
                 onReplayRun={handleReplayRun}
                 isSimulating={isSimulating}
+                isStreaming={isStreaming}
                 isVerifying={isVerifying}
                 canReplay={!!currentManifest}
               />
