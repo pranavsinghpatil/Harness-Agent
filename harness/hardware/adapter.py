@@ -27,18 +27,20 @@ class HardwareAdapter:
         elif hasattr(env, "hardware_scheduler"):
             env.hardware_scheduler.profile = profile_copy
 
-        # 2. Configure baseline transport channel latencies
-        if "camera" in env.transport.channels and "camera_mipi" in preset.transport_latencies:
-            mipi = preset.transport_latencies["camera_mipi"]
-            env.transport.channels["camera"].base_latency_s = mipi.get("base_latency_s", 0.015)
-            env.transport.channels["camera"].jitter_std_s = mipi.get("jitter_std_s", 0.002)
+        # 2. Configure baseline transport channel latencies for all registered sensor channels
+        channel_mappings = {
+            "camera_mipi": ["sensor.camera", "camera"],
+            "lidar_serial": ["sensor.lidar", "lidar"],
+            "imu_i2c": ["sensor.imu", "imu"],
+            "encoder_spi": ["sensor.encoder", "encoder"],
+            "position_bus": ["sensor.position", "position"],
+        }
 
-        if "lidar" in env.transport.channels and "lidar_serial" in preset.transport_latencies:
-            serial = preset.transport_latencies["lidar_serial"]
-            env.transport.channels["lidar"].base_latency_s = serial.get("base_latency_s", 0.005)
-            env.transport.channels["lidar"].jitter_std_s = serial.get("jitter_std_s", 0.001)
-
-        if "imu" in env.transport.channels and "imu_i2c" in preset.transport_latencies:
-            i2c = preset.transport_latencies["imu_i2c"]
-            env.transport.channels["imu"].base_latency_s = i2c.get("base_latency_s", 0.0008)
-            env.transport.channels["imu"].jitter_std_s = i2c.get("jitter_std_s", 0.0001)
+        for preset_key, candidate_names in channel_mappings.items():
+            if preset_key in preset.transport_latencies:
+                cfg = preset.transport_latencies[preset_key]
+                for ch_name in candidate_names:
+                    if ch_name in env.transport.channels:
+                        channel = env.transport.channels[ch_name]
+                        channel.base_latency_s = cfg.get("base_latency_s", channel.base_latency_s)
+                        channel.jitter_std_s = cfg.get("jitter_std_s", channel.jitter_std_s)
