@@ -11,3 +11,6 @@ __all__ = [
     "DeterministicReplayer",
     "ReplayComparisonResult",
 ]
+from sandbox.telemetry.evidence import EvidenceLink, EvidenceSignal, EvidenceSnapshot, build_evidence_snapshot
+
+__all__ = ["EvidenceLink", "EvidenceSignal", "EvidenceSnapshot", "build_evidence_snapshot"]
