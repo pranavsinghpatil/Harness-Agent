@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from enum import Enum
 import math
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
+from harness.models.events import EventSeverity, HarnessEventType
 from sandbox.telemetry.recorder import TelemetryFrame
 
 
@@ -141,8 +143,8 @@ def build_evidence_snapshot(
 
     Raises:
         ValueError: If an event is missing or has blank canonical identity fields,
-            belongs to another run, has a non-numeric or non-finite timestamp, or
-            has a non-mapping payload.
+            belongs to another run, has an invalid classification, has a non-numeric
+            or non-finite timestamp, or has a non-mapping payload.
     """
     signal_list: list[EvidenceSignal] = []
     for frame_index, frame in enumerate(frames):
@@ -184,6 +186,9 @@ def _build_event_link(event: Mapping[str, Any], run_id: str) -> EvidenceLink:
         raise ValueError("event wall_time must be numeric") from exc
     if not math.isfinite(wall_time):
         raise ValueError("event wall_time must be finite")
+    event_type: str = _canonical_enum_value(event["type"], "type", HarnessEventType)
+    source: str = _canonical_source(event["source"])
+    severity: str = _canonical_enum_value(event["severity"], "severity", EventSeverity)
     event_payload: object = event.get("payload", {})
     if not isinstance(event_payload, Mapping):
         raise ValueError("event payload must be a mapping")
@@ -191,13 +196,31 @@ def _build_event_link(event: Mapping[str, Any], run_id: str) -> EvidenceLink:
         event_id=event["event_id"],
         evaluation_id=event["evaluation_id"],
         episode_id=event["episode_id"],
-        event_type=str(event["type"]),
-        source=str(event["source"]),
+        event_type=event_type,
+        source=source,
         sim_time=sim_time,
-        severity=str(event["severity"]),
+        severity=severity,
         wall_time=wall_time,
         payload=_freeze_payload(event_payload),
     )
+
+
+def _canonical_enum_value(value: object, field_name: str, enum_type: type[Enum]) -> str:
+    """Normalize one classification while rejecting non-canonical values."""
+    candidate: object = value.value if isinstance(value, enum_type) else value
+    if isinstance(candidate, Enum) or not isinstance(candidate, str) or not candidate.strip():
+        raise ValueError(f"event {field_name} must be a canonical {enum_type.__name__}")
+    try:
+        return enum_type(candidate).value  # type: ignore[no-any-return]
+    except ValueError as exc:
+        raise ValueError(f"event {field_name} must be a canonical {enum_type.__name__}") from exc
+
+
+def _canonical_source(value: object) -> str:
+    """Require a non-blank source string without coercing arbitrary objects."""
+    if isinstance(value, Enum) or not isinstance(value, str) or not value.strip():
+        raise ValueError("event source must be a non-empty string")
+    return value
 
 
 def _freeze_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
