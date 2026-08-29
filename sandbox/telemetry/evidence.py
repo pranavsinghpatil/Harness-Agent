@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
+import math
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 from sandbox.telemetry.recorder import TelemetryFrame
@@ -48,7 +51,7 @@ class EvidenceLink:
             "event_type": self.event_type,
             "source": self.source,
             "sim_time": self.sim_time,
-            "payload": dict(self.payload),
+            "payload": _thaw_payload(self.payload),
         }
 
 
@@ -77,20 +80,23 @@ class EvidenceSnapshot:
 
 def _numeric_signals(frame: TelemetryFrame, frame_index: int) -> Iterable[EvidenceSignal]:
     """Yield high-signal numeric observations from one telemetry frame."""
-    metrics = frame.hardware_metrics
-    vehicle = frame.vehicle_state
-    values = (
+    metrics: Mapping[str, Any] = frame.hardware_metrics
+    vehicle: Mapping[str, Any] = frame.vehicle_state
+    values: tuple[tuple[str, Any, str, str], ...] = (
         ("min_clearance", frame.min_clearance, "m", "safety.oracle"),
-        ("vehicle.velocity", vehicle.get("velocity", 0.0), "m/s", "physics.vehicle"),
-        ("hardware.cpu_utilization", metrics.get("cpu_utilization", 0.0), "ratio", "hardware.scheduler"),
-        ("hardware.temperature", metrics.get("temperature_celsius", 0.0), "C", "hardware.scheduler"),
-        ("hardware.deadline_misses", metrics.get("deadline_misses", 0), "count", "hardware.scheduler"),
+        ("vehicle.velocity", vehicle.get("velocity"), "m/s", "physics.vehicle"),
+        ("hardware.cpu_utilization", metrics.get("cpu_utilization"), "ratio", "hardware.scheduler"),
+        ("hardware.temperature", metrics.get("temperature_celsius"), "C", "hardware.scheduler"),
+        ("hardware.deadline_misses", metrics.get("deadline_misses"), "count", "hardware.scheduler"),
     )
     for name, value, unit, source in values:
         if isinstance(value, (int, float)):
+            numeric_value: float = float(value)
+            if not math.isfinite(numeric_value):
+                continue
             yield EvidenceSignal(
                 name=name,
-                value=float(value),
+                value=numeric_value,
                 unit=unit,
                 sim_time=frame.sim_time,
                 frame_index=frame_index,
@@ -127,15 +133,20 @@ def build_evidence_snapshot(
     links: list[EvidenceLink] = []
     for event in events:
         try:
-            sim_time = float(event.get("sim_time", 0.0))
+            sim_time: float = float(event.get("sim_time", 0.0))
         except (TypeError, ValueError) as exc:
             raise ValueError("event sim_time must be numeric") from exc
+        if not math.isfinite(sim_time):
+            raise ValueError("event sim_time must be finite")
+        event_payload: object = event.get("payload", {})
+        if not isinstance(event_payload, Mapping):
+            raise ValueError("event payload must be a mapping")
         links.append(
             EvidenceLink(
                 event_type=str(event.get("type", "UNKNOWN")),
                 source=str(event.get("source", "unknown")),
                 sim_time=sim_time,
-                payload=dict(event.get("payload", {})),
+                payload=_freeze_payload(event_payload),
             )
         )
     links.sort(key=lambda link: (link.sim_time, link.event_type, link.source))
@@ -145,3 +156,33 @@ def build_evidence_snapshot(
         signals=tuple(signal_list),
         event_links=tuple(links),
     )
+
+
+def _freeze_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Deep-copy and freeze nested event payload containers."""
+    def freeze(value: object) -> object:
+        if isinstance(value, Mapping):
+            return MappingProxyType({key: freeze(item) for key, item in value.items()})
+        if isinstance(value, list):
+            return tuple(freeze(item) for item in value)
+        if isinstance(value, tuple):
+            return tuple(freeze(item) for item in value)
+        if isinstance(value, set):
+            return frozenset(freeze(item) for item in value)
+        return deepcopy(value)
+
+    frozen: object = freeze(payload)
+    if not isinstance(frozen, Mapping):
+        raise ValueError("event payload must be a mapping")
+    return frozen
+
+
+def _thaw_payload(payload: object) -> object:
+    """Convert frozen payload containers into JSON-compatible values."""
+    if isinstance(payload, Mapping):
+        return {key: _thaw_payload(value) for key, value in payload.items()}
+    if isinstance(payload, tuple):
+        return [_thaw_payload(value) for value in payload]
+    if isinstance(payload, frozenset):
+        return sorted((_thaw_payload(value) for value in payload), key=repr)
+    return deepcopy(payload)

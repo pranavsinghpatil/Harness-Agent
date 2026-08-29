@@ -12,5 +12,18 @@ __all__ = [
     "ReplayComparisonResult",
 ]
 from sandbox.telemetry.evidence import EvidenceLink, EvidenceSignal, EvidenceSnapshot, build_evidence_snapshot
+from sandbox.telemetry.manifest import RunManifest
+from sandbox.telemetry.recorder import TelemetryFrame, TelemetryRecorder
+from sandbox.telemetry.replay import DeterministicReplayer, ReplayComparisonResult
 
-__all__ = ["EvidenceLink", "EvidenceSignal", "EvidenceSnapshot", "build_evidence_snapshot"]
+__all__: list[str] = [
+    "RunManifest",
+    "TelemetryFrame",
+    "TelemetryRecorder",
+    "DeterministicReplayer",
+    "ReplayComparisonResult",
+    "EvidenceLink",
+    "EvidenceSignal",
+    "EvidenceSnapshot",
+    "build_evidence_snapshot",
+]
