@@ -19,7 +19,9 @@ Every code review and resolution document is clearly prefixed and linked to its 
 
 | Pull Request | Scope | Findings Catalog | Remediation & Resolution | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| [**PR #2**](https://github.com/pranavsinghpatil/Harness-Agent/pull/2) | Virtual Hardware Simulation Sandbox | [`pr2_review_findings.md`](file:///D:/GitRepo/harness/docs/qodo/pr2_review_findings.md) | [**`pr2_resolution.md`**](file:///D:/GitRepo/harness/docs/qodo/pr2_resolution.md) | ✅ **100% Resolved & Verified** (26/26 Tests Passed) |
+| [**PR #2 (Round 1)**](https://github.com/pranavsinghpatil/Harness-Agent/pull/2) | Virtual Hardware Simulation Sandbox | [`pr2_review_findings.md`](./pr2_review_findings.md) | [**`pr2_resolution.md`**](./pr2_resolution.md) | ✅ **100% Resolved & Verified** (26/26 Tests Passed) |
+| [**PR #2 (Round 2)**](https://github.com/pranavsinghpatil/Harness-Agent/pull/2) | Sandbox Edge Cases & Governance | [`pr2_review_findings.md`](./pr2_review_findings.md) | [**`pr2_round2_resolution.md`**](./pr2_round2_resolution.md) | ✅ **100% Resolved & Verified** (28/28 Tests Passed) |
+| [**PR #5**](https://github.com/pranavsinghpatil/Harness-Agent/pull/5) | Qodo Round 2 Remediation PR | [**`pr5_review_findings.md`**](./pr5_review_findings.md) | `pr5_resolution.md` | 🔍 **Review Documented (13 Findings)** |
 
 ---
 
@@ -28,8 +30,10 @@ Every code review and resolution document is clearly prefixed and linked to its 
 ```
 docs/qodo/
 ├── README.md                 # Master index mapping each PR to its review and resolution docs
-├── pr2_resolution.md         # PR #2: Complete resolution evidence, decision matrix, and test logs
-├── pr2_review_findings.md    # PR #2: Comprehensive catalog of 28 findings & 33 inline threads
+├── pr2_resolution.md         # PR #2: Round 1 resolution evidence (28 findings)
+├── pr2_review_findings.md    # PR #2: Comprehensive catalog of findings
+├── pr2_round2_resolution.md  # PR #2: Round 2 resolution evidence (20 findings)
+├── pr5_review_findings.md    # PR #5: Catalog of 13 review findings
 ├── remediation_plan.md       # PR #2: Itemized engineering fix plan
 └── skills_workflow_guide.md  # Qodo Agent Skills guide ($qodo-pr-resolver, /agentic_review)
 ```
