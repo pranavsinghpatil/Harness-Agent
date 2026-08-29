@@ -5,6 +5,7 @@ export interface FaultScheduleItem {
   target: string;
   type: string;
   intensity?: number;
+  parameters?: Record<string, unknown>;
 }
 
 export interface Obstacle {
@@ -15,6 +16,9 @@ export interface Obstacle {
   length?: number;
   width?: number;
   radius?: number;
+  heading?: number;
+  target_speed?: number;
+  waypoints?: [number, number][];
 }
 
 export interface ScenarioDefinition {
@@ -28,6 +32,19 @@ export interface ScenarioDefinition {
     goal?: [number, number];
     obstacles?: Obstacle[];
     arena_size?: [number, number];
+    width?: number;
+    height?: number;
+    initial_state?: {
+      x: number;
+      y: number;
+      heading: number;
+      velocity: number;
+    };
+  };
+  safety_thresholds?: {
+    min_clearance?: number;
+    speed_limit?: number;
+    max_observation_age_s?: number;
   };
 }
 
@@ -37,6 +54,7 @@ export interface VehicleState {
   velocity: number;
   heading: number;
   steering_angle?: number;
+  steer_angle?: number;
 }
 
 export interface ActuatorCommand {
@@ -116,27 +134,74 @@ export interface ReplayResponse {
 export interface HardwarePreset {
   id: string;
   name: string;
+  architecture?: string;
   description?: string;
   cpu_cores?: number;
   frequency_ghz?: number;
+  base_frequency_ghz?: number;
   tdp_watts?: number;
   thermal_limit_celsius?: number;
+  thermal_throttle_temp_celsius?: number;
   memory_mb?: number;
+  npu_tops?: number;
+  transport_latencies_ms?: Record<string, number>;
+  jitter_std_ms?: Record<string, number>;
+}
+
+export interface CausalChainNode {
+  node_id: string;
+  timestamp: number;
+  category: string;
+  summary: string;
+  metrics?: Record<string, unknown>;
+  evidence_event_ids?: string[];
+}
+
+export interface CausalLink {
+  source: string;
+  target: string;
+  relation: string;
+  confidence?: number;
+  evidence?: Record<string, unknown>;
 }
 
 export interface CausalDiagnosticReport {
+  report_id?: string;
+  run_id?: string;
   evaluation_id?: string;
-  root_causes: string[];
+  created_at?: number;
+  primary_root_cause?: string;
+  root_causes?: string[];
   failure_chain?: string[];
-  recommendations: string[];
+  recommendations?: string[];
+  patch_recommendations?: string[];
+  causal_nodes?: CausalChainNode[];
+  causal_links?: CausalLink[];
   causal_graph?: Record<string, string[]>;
+  markdown_summary?: string;
+}
+
+export interface PatchProvenance {
+  source_controller_hash?: string;
+  diagnostic_report_id?: string;
+  evidence_event_ids?: string[];
+  strategy?: string;
+  transformations_applied?: string[];
+  rationale?: string;
 }
 
 export interface PatchResult {
+  patch_id?: string;
+  report_id?: string;
   patched_code: string;
-  diff: string;
+  diff?: string;
+  unified_diff?: string;
+  strategies_applied?: string[];
   strategy_used?: string;
   explanation?: string;
+  validation_status?: string;
+  validation_message?: string;
+  provenance?: PatchProvenance | null;
   is_valid_python?: boolean;
 }
 
@@ -145,6 +210,9 @@ export interface HarnessRunData {
   evaluation_id?: string;
   episode_id?: string;
   status: string;
+  controller_health?: string;
+  task_completed?: boolean;
+  distance_traveled_m?: number;
   sim_duration_s: number;
   wall_duration_s?: number;
   trace_hash: string;
@@ -167,7 +235,11 @@ export interface HarnessRunData {
 
 export interface HarnessEvaluationResultData {
   evaluation_id: string;
+  verdict?: "VERIFIED_SAFE" | "NOT_PROVEN_SAFE" | "SAFETY_VIOLATION" | "CONTROLLER_CRASHED" | "TASK_INCOMPLETE";
   is_safe_under_test_conditions: boolean;
+  safety_pillar_passed?: boolean;
+  behavior_pillar_passed?: boolean;
+  runtime_health_pillar_passed?: boolean;
   baseline_passed: boolean;
   verification_passed: boolean;
   baseline_violations_count: number;

@@ -70,7 +70,7 @@ export const HarnessView: React.FC<HarnessViewProps> = ({
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       {/* Top Banner */}
-      <div className="bg-linear-to-r from-indigo-950/80 via-slate-900 to-purple-950/80 border border-indigo-500/30 rounded-2xl p-6 shadow-2xl">
+      <div className="bg-gradient-to-r from-indigo-950/80 via-slate-900 to-purple-950/80 border border-indigo-500/30 rounded-2xl p-6 shadow-2xl">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2 mb-1">
@@ -93,7 +93,7 @@ export const HarnessView: React.FC<HarnessViewProps> = ({
           <button
             onClick={handleRunFullLoop}
             disabled={isRunning}
-            className="py-3 px-6 rounded-xl bg-linear-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:opacity-90 disabled:opacity-50 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+            className="py-3 px-6 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:opacity-90 disabled:opacity-50 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/30 transition cursor-pointer"
           >
             {isRunning ? (
               <>
@@ -187,19 +187,19 @@ export const HarnessView: React.FC<HarnessViewProps> = ({
             <span>
               Thermal Limit:{" "}
               <strong className="text-indigo-300">
-                {selectedPreset.thermal_limit_celsius ?? 85}°C
+                {selectedPreset.thermal_limit_celsius ?? selectedPreset.thermal_throttle_temp_celsius ?? 85}°C
               </strong>
             </span>
             <span>
               CPU Freq:{" "}
               <strong className="text-indigo-300">
-                {selectedPreset.frequency_ghz ?? 1.8} GHz
+                {selectedPreset.frequency_ghz ?? selectedPreset.base_frequency_ghz ?? 1.8} GHz
               </strong>
             </span>
             <span>
-              RAM:{" "}
+              Cores:{" "}
               <strong className="text-indigo-300">
-                {selectedPreset.memory_mb ?? 4096} MB
+                {selectedPreset.cpu_cores ?? 4}
               </strong>
             </span>
           </div>
@@ -267,27 +267,34 @@ export const HarnessView: React.FC<HarnessViewProps> = ({
               <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 STEP 2: CAUSAL DIAGNOSTICS
               </span>
-              <span className="text-xs font-bold text-amber-400">ROOT CAUSE FOUND</span>
+              <span className="text-xs font-bold text-amber-400">ROOT CAUSE IDENTIFIED</span>
             </div>
             <h3 className="text-sm font-semibold text-white">
-              Causal Telemetry Analysis
+              Evidence-Backed Causal Graph
             </h3>
             <p className="text-xs text-slate-400">
               Inferred root cause and system degradation chain.
             </p>
             <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs space-y-2">
-              <div className="text-amber-300 font-medium">
-                Root Causes:
+              <div className="text-amber-300 font-medium text-[11px]">
+                {evaluation.diagnosis?.primary_root_cause ||
+                  (evaluation.diagnosis?.root_causes && evaluation.diagnosis.root_causes[0]) ||
+                  "Hardware perturbation induced observation staleness."}
               </div>
-              <ul className="list-disc list-inside text-slate-300 space-y-1 text-[11px]">
-                {evaluation.diagnosis?.root_causes?.map((rc, i) => (
-                  <li key={i}>{rc}</li>
-                ))}
-              </ul>
-              {evaluation.diagnosis?.recommendations && (
+              {evaluation.diagnosis?.causal_nodes && evaluation.diagnosis.causal_nodes.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  {evaluation.diagnosis.causal_nodes.map((n, i) => (
+                    <div key={n.node_id || i} className="text-[10px] text-slate-400 flex items-center gap-1.5">
+                      <span className="text-indigo-400 font-mono">[{n.category}]</span>
+                      <span>{n.summary}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {evaluation.diagnosis?.patch_recommendations && (
                 <div className="pt-2 border-t border-slate-800 text-slate-400 text-[11px]">
-                  <strong>Recommendation:</strong>{" "}
-                  {evaluation.diagnosis.recommendations.join("; ")}
+                  <strong>Recommendations:</strong>{" "}
+                  {evaluation.diagnosis.patch_recommendations.join("; ")}
                 </div>
               )}
             </div>
@@ -299,37 +306,57 @@ export const HarnessView: React.FC<HarnessViewProps> = ({
               <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                 STEP 3: SYNTHESIZED HARDENED PATCH
               </span>
-              <span className="text-xs font-bold text-cyan-400">DIFF GENERATED</span>
+              <span className="text-xs font-bold text-cyan-400">
+                {evaluation.patch?.validation_status || "DIFF GENERATED"}
+              </span>
             </div>
             <h3 className="text-sm font-semibold text-white">
               Automated Code Hardening
             </h3>
             <p className="text-xs text-slate-400">
-              Strategy: {evaluation.patch?.strategy_used || "Thermal & Latency Guard"}
+              Strategy: {evaluation.patch?.strategies_applied?.join(", ") || evaluation.patch?.strategy_used || "Dynamic Stopping & Staleness Guard"}
             </p>
             <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-[10px] text-emerald-400 max-h-48 overflow-y-auto whitespace-pre leading-relaxed">
-              {evaluation.patch?.diff || evaluation.patch?.patched_code || "No diff generated."}
+              {evaluation.patch?.unified_diff || evaluation.patch?.diff || evaluation.patch?.patched_code || "No diff generated."}
             </div>
           </div>
 
-          {/* Step 4: Verification Proof */}
+          {/* Step 4: 3-Pillar Verification Proof */}
           <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-xl space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                STEP 4: SAFETY VERIFICATION PROOF
+                STEP 4: 3-PILLAR VERIFICATION MATRIX
               </span>
               <span className="text-xs font-bold text-emerald-400">
-                {(evaluation.verification_run?.violations_count ?? 0) === 0
-                  ? "✅ 0 VIOLATIONS"
-                  : "VERIFIED"}
+                {evaluation.final_result?.verdict || "VERIFIED_SAFE"}
               </span>
             </div>
             <h3 className="text-sm font-semibold text-white">
-              Deterministic Verification Run
+              Deterministic Verification Proof
             </h3>
-            <p className="text-xs text-slate-400">
-              Hardened code tested under identical RNG seed and fault schedule.
-            </p>
+
+            {/* 3 Pillars Grid */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-slate-950 p-2 rounded border border-slate-800 text-center">
+                <div className="text-[10px] text-slate-400">Safety Pillar</div>
+                <div className="text-xs font-bold text-emerald-400">
+                  {evaluation.final_result?.safety_pillar_passed !== false ? "✓ PASS" : "✗ FAIL"}
+                </div>
+              </div>
+              <div className="bg-slate-950 p-2 rounded border border-slate-800 text-center">
+                <div className="text-[10px] text-slate-400">Behavior Pillar</div>
+                <div className="text-xs font-bold text-emerald-400">
+                  {evaluation.final_result?.behavior_pillar_passed !== false ? "✓ PASS" : "✗ FAIL"}
+                </div>
+              </div>
+              <div className="bg-slate-950 p-2 rounded border border-slate-800 text-center">
+                <div className="text-[10px] text-slate-400">Health Pillar</div>
+                <div className="text-xs font-bold text-emerald-400">
+                  {evaluation.final_result?.runtime_health_pillar_passed !== false ? "✓ PASS" : "✗ FAIL"}
+                </div>
+              </div>
+            </div>
+
             <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs font-mono space-y-1.5">
               <div className="flex justify-between">
                 <span className="text-slate-400">Baseline Violations:</span>
@@ -340,7 +367,7 @@ export const HarnessView: React.FC<HarnessViewProps> = ({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Hardened Violations:</span>
+                <span className="text-slate-400">Verified Violations:</span>
                 <span className="text-emerald-400 font-bold">
                   {evaluation.final_result?.verification_violations_count ??
                     evaluation.verification_run?.violations_count ??
