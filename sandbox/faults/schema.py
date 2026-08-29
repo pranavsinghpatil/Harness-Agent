@@ -11,9 +11,9 @@ SUPPORTED_FAULT_PARAMETERS: dict[tuple[str, str], frozenset[str]] = {
     ("sensor.lidar", "phantom_returns"): frozenset({"rate"}),
     ("sensor.camera", "frame_drop"): frozenset({"rate"}),
     ("sensor.camera", "confidence_degradation"): frozenset({"degradation"}),
-    ("transport.camera", "added_latency"): frozenset({"latency_ms"}),
-    ("transport.camera", "packet_loss"): frozenset({"loss_rate"}),
-    ("transport.camera", "jitter"): frozenset({"jitter_ms"}),
+    ("transport.*", "added_latency"): frozenset({"latency_ms"}),
+    ("transport.*", "packet_loss"): frozenset({"loss_rate"}),
+    ("transport.*", "jitter"): frozenset({"jitter_ms"}),
     ("hardware.compute", "overload"): frozenset({"compute_units"}),
     ("hardware.compute", "thermal_spike"): frozenset({"temp_increase"}),
     ("hardware.compute", "cpu_availability"): frozenset({"factor"}),
@@ -28,7 +28,8 @@ SUPPORTED_FAULT_PARAMETERS: dict[tuple[str, str], frozenset[str]] = {
 
 def is_supported_fault_parameter(target: str, fault_type: str, parameter_name: str) -> bool:
     """Return whether a single-parameter perturbation is supported at runtime."""
-    return parameter_name in SUPPORTED_FAULT_PARAMETERS.get((target, fault_type), frozenset())
+    registry_target = "transport.*" if target.startswith("transport.") else target
+    return parameter_name in SUPPORTED_FAULT_PARAMETERS.get((registry_target, fault_type), frozenset())
 
 
 class FaultDefinition(BaseModel):

@@ -149,7 +149,10 @@ class VirtualEdgeScheduler:
             return []
 
         self._update_thermal_state(dt)
-        just_completed, _remaining_compute, consumed_compute = self._process_task_queue(sim_time, dt)
+        results: tuple[list[ComputeTask], float, float] = self._process_task_queue(sim_time, dt)
+        just_completed: list[ComputeTask] = results[0]
+        _remaining_compute: float = results[1]
+        consumed_compute: float = results[2]
         self._audit_remaining_deadlines(sim_time)
         self._update_metrics(consumed_compute, dt)
 

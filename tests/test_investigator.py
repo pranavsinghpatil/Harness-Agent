@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
 from types import SimpleNamespace
 
 from harness.investigator import AutonomousInvestigator, InvestigatorConfig
-from harness.models.evaluation import ControllerHealth, HarnessRun, HarnessRunStatus
+from harness.planning import ExperimentOutcome
+from harness.models.evaluation import ControllerHealth, EvaluationRequest, HarnessRun, HarnessRunStatus
 from mcp_server.server import MCPServerHandler
 
 
@@ -13,18 +15,18 @@ class FakeRunManager:
     """Small deterministic adapter proving orchestration without a simulator run."""
 
     def __init__(self) -> None:
-        self.requests = {}
-        self.counter = 0
+        self.requests: dict[str, EvaluationRequest] = {}
+        self.counter: int = 0
 
-    def create_evaluation(self, request):
+    def create_evaluation(self, request: EvaluationRequest) -> SimpleNamespace:
         self.counter += 1
         evaluation_id = f"fake_eval_{self.counter}"
         self.requests[evaluation_id] = request
         return SimpleNamespace(evaluation_id=evaluation_id)
 
     def execute_baseline(self, evaluation_id: str) -> HarnessRun:
-        request = self.requests[evaluation_id]
-        failed = bool(request.chaos_fault_overrides)
+        request: EvaluationRequest = self.requests[evaluation_id]
+        failed: bool = bool(request.chaos_fault_overrides)
         return HarnessRun(
             run_id=f"fake_run_{evaluation_id}",
             status=HarnessRunStatus.SAFETY_VIOLATION if failed else HarnessRunStatus.COMPLETED,
@@ -77,9 +79,26 @@ def test_incomplete_completed_run_is_not_passing_evidence() -> None:
         task_completed=False,
     )
 
-    outcome = AutonomousInvestigator._to_outcome(run)
+    outcome: ExperimentOutcome = AutonomousInvestigator._to_outcome(run)
 
     assert outcome.passed is False
+
+
+def test_rejected_run_limit_does_not_mutate_investigation_status() -> None:
+    investigator: AutonomousInvestigator = AutonomousInvestigator(
+        InvestigatorConfig(objective="Reject invalid limits."),
+        run_manager=FakeRunManager(),
+    )
+
+    try:
+        investigator.run(max_experiments=0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected invalid experiment limit to fail")
+
+    result: dict[str, Any] = investigator.to_dict()
+    assert result["run_limit"] is None
 
 
 def test_mcp_manifest_exposes_autonomous_investigation() -> None:

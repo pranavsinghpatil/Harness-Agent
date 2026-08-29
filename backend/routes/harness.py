@@ -48,7 +48,7 @@ class InvestigationPayload(BaseModel):
     @classmethod
     def validate_objective(cls, value: str) -> str:
         """Reject blank objectives as a client validation error."""
-        normalized = value.strip()
+        normalized: str = value.strip()
         if not normalized:
             raise ValueError("objective must not be blank")
         return normalized

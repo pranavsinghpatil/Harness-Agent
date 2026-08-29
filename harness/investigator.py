@@ -159,12 +159,12 @@ class AutonomousInvestigator:
 
     def run(self, max_experiments: Optional[int] = None) -> AutonomousInvestigator:
         """Execute candidates until the configured budget or optional limit."""
-        self._last_run_limit = max_experiments
         limit = self.config.budget
         if max_experiments is not None:
             if max_experiments < 1:
                 raise ValueError("max_experiments must be at least 1")
             limit = min(limit, max_experiments)
+        self._last_run_limit = max_experiments
 
         while self.planner.planned_count < limit:
             candidate = self.planner.plan_next()
@@ -177,13 +177,13 @@ class AutonomousInvestigator:
         """Serialize the complete investigation, including explicit unknowns."""
         planner_status = self.planner.status()
         records = self.planner.ledger.records
-        caller_limited = (
+        caller_limited: bool = (
             self._last_run_limit is not None
             and self._last_run_limit < self.config.budget
             and self.planner.planned_count >= self._last_run_limit
         )
         if caller_limited:
-            status = "PARTIAL"
+            status: str = "PARTIAL"
         elif self.planner.planned_count >= self.config.budget:
             status = "BUDGET_EXHAUSTED"
         elif len(records) < self.planner.planned_count:
