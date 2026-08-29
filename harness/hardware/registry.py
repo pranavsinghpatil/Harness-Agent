@@ -27,17 +27,25 @@ class HardwareRegistry:
         """
         self._presets[preset.id.upper()] = preset
 
-    def get(self, preset_id: str) -> HardwarePreset:
-        """Lookup a hardware preset by ID, falling back to D-Robotics RDK X5.
+    def get(self, preset_id: str, allow_fallback: bool = True) -> HardwarePreset:
+        """Lookup a hardware preset by ID with optional default fallback.
 
         Args:
             preset_id: Hardware identifier (case-insensitive).
+            allow_fallback: If True, returns default RDK_X5_PRESET on unknown ID.
 
         Returns:
             The matched HardwarePreset or default RDK_X5_PRESET.
+
+        Raises:
+            KeyError: If preset_id is unknown and allow_fallback is False.
         """
         clean_id = preset_id.upper()
-        return self._presets.get(clean_id, RDK_X5_PRESET)
+        if clean_id in self._presets:
+            return self._presets[clean_id]
+        if allow_fallback:
+            return RDK_X5_PRESET
+        raise KeyError(f"Hardware preset '{preset_id}' not found in registry. Available presets: {list(self._presets.keys())}")
 
     def list_presets(self) -> List[HardwarePreset]:
         """List all available hardware presets.

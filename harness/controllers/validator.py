@@ -1,9 +1,9 @@
-"""Syntax, interface, and safety validation for user-submitted target controller code."""
+"""Syntax, interface, and security validation for user-submitted target controller code."""
 
 from __future__ import annotations
 import ast
-from dataclasses import dataclass
-from typing import List, Tuple, Set
+from dataclasses import dataclass, field
+from typing import List, Set
 
 
 @dataclass
@@ -11,36 +11,45 @@ class ControllerValidationResult:
     """Outcome of controller source code validation.
 
     Attributes:
-        is_valid: True if syntax and safety checks pass.
+        is_valid: True if syntax and security checks pass.
         has_base_agent_class: True if a subclass of BaseTargetAgent was found.
         has_control_function: True if a top-level or method control() exists.
         entrypoint_class_name: Name of the controller class if found.
         errors: List of syntax or validation error strings.
-        warnings: List of advisory warnings (e.g. unhandled sensor types).
+        warnings: List of advisory warnings.
     """
     is_valid: bool
     has_base_agent_class: bool = False
     has_control_function: bool = False
     entrypoint_class_name: str = ""
-    errors: List[str] = ()
-    warnings: List[str] = ()
+    errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
 
 
 class ControllerValidator:
     """Validates Python controller code against syntax rules and target agent contracts."""
 
-    # Disallowed dangerous built-ins and libraries
-    DISALLOWED_MODULES: Set[str] = {"subprocess", "socket", "os.system", "shutil", "requests", "urllib"}
+    DISALLOWED_MODULES: Set[str] = {
+        "os", "sys", "subprocess", "socket", "shutil", "requests", "urllib",
+        "http", "importlib", "ctypes", "threading", "multiprocessing", "pty",
+    }
+    DISALLOWED_CALLS: Set[str] = {
+        "__import__", "eval", "exec", "open", "compile", "getattr", "setattr",
+        "delattr", "globals", "locals", "input", "breakpoint",
+    }
+    DISALLOWED_ATTRS: Set[str] = {
+        "__subclasses__", "__bases__", "__mro__", "__globals__", "__code__", "__builtins__",
+    }
 
     @classmethod
     def validate_code(cls, source_code: str) -> ControllerValidationResult:
-        """Parse and validate controller code.
+        """Parse and validate controller code against security rules and structural contracts.
 
         Args:
-            source_code: Python script string.
+            source_code: Python script string to inspect.
 
         Returns:
-            ControllerValidationResult containing validity status and details.
+            ControllerValidationResult containing validity boolean, errors, and metadata.
         """
         errors: List[str] = []
         warnings: List[str] = []
@@ -50,7 +59,6 @@ class ControllerValidator:
                 is_valid=False, errors=["Empty controller source code supplied."]
             )
 
-        # 1. Syntax Check via AST
         try:
             tree = ast.parse(source_code, filename="<target_controller>")
         except SyntaxError as e:
@@ -59,50 +67,65 @@ class ControllerValidator:
                 errors=[f"Syntax error at line {e.lineno}, col {e.offset}: {e.msg}"],
             )
 
-        # 2. Inspect AST nodes for safety and structure
         has_base_agent_class = False
         has_control_function = False
         entrypoint_class = ""
 
         for node in ast.walk(tree):
-            # Check for disallowed imports
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name in cls.DISALLOWED_MODULES:
-                        errors.append(f"Disallowed import detected: '{alias.name}'.")
-            elif isinstance(node, ast.ImportFrom):
-                if node.module and node.module in cls.DISALLOWED_MODULES:
-                    errors.append(f"Disallowed from-import detected: '{node.module}'.")
+            cls._check_disallowed_imports(node, errors)
+            cls._check_disallowed_calls_and_attrs(node, errors)
 
-            # Check for BaseTargetAgent or controller classes
-            elif isinstance(node, ast.ClassDef):
-                for base in node.bases:
-                    base_id = getattr(base, "id", None) or getattr(base, "attr", None)
-                    if base_id in ("BaseTargetAgent", "ReactiveBaselineAgent", "ReferenceAutonomousAgent"):
-                        has_base_agent_class = True
-                        entrypoint_class = node.name
-
-                # Check methods inside class
-                for item in node.body:
-                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name in ("step", "control", "compute_action"):
-                        has_control_function = True
-
-            # Check for standalone control function
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name in ("control", "compute_control", "step"):
+            if isinstance(node, ast.ClassDef):
+                if cls._is_target_agent_class(node):
+                    has_base_agent_class = True
+                    entrypoint_class = node.name
+                if any(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name in ("step", "control", "compute_action") for item in node.body):
                     has_control_function = True
 
-        if not has_base_agent_class and not has_control_function:
-            warnings.append(
-                "Code does not explicitly subclass BaseTargetAgent or define a control() function. A generic wrapper will be applied."
-            )
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in ("control", "compute_control", "step"):
+                has_control_function = True
 
-        is_valid = len(errors) == 0
+        if not has_base_agent_class and not has_control_function:
+            warnings.append("Code does not explicitly subclass BaseTargetAgent or define a control function.")
+
         return ControllerValidationResult(
-            is_valid=is_valid,
+            is_valid=(len(errors) == 0),
             has_base_agent_class=has_base_agent_class,
             has_control_function=has_control_function,
             entrypoint_class_name=entrypoint_class,
             errors=errors,
             warnings=warnings,
         )
+
+    @classmethod
+    def _check_disallowed_imports(cls, node: ast.AST, errors: List[str]) -> None:
+        """Inspects import nodes against the restricted module blacklist."""
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                mod_root = alias.name.split(".")[0]
+                if mod_root in cls.DISALLOWED_MODULES:
+                    errors.append(f"Disallowed import detected: '{alias.name}'.")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                mod_root = node.module.split(".")[0]
+                if mod_root in cls.DISALLOWED_MODULES:
+                    errors.append(f"Disallowed from-import detected: '{node.module}'.")
+
+    @classmethod
+    def _check_disallowed_calls_and_attrs(cls, node: ast.AST, errors: List[str]) -> None:
+        """Inspects AST calls and attribute accesses for sandbox escape attempts."""
+        if isinstance(node, ast.Call):
+            func_name = getattr(node.func, "id", None)
+            if func_name in cls.DISALLOWED_CALLS:
+                errors.append(f"Disallowed built-in function call: '{func_name}()'.")
+        elif isinstance(node, ast.Attribute) and node.attr in cls.DISALLOWED_ATTRS:
+            errors.append(f"Disallowed dunder attribute access: '{node.attr}'.")
+
+    @classmethod
+    def _is_target_agent_class(cls, node: ast.ClassDef) -> bool:
+        """Determines if a class definition subclasses a recognized BaseTargetAgent variant."""
+        for base in node.bases:
+            base_id = getattr(base, "id", None) or getattr(base, "attr", None)
+            if base_id in ("BaseTargetAgent", "ReactiveBaselineAgent", "ReferenceAutonomousAgent"):
+                return True
+        return False

@@ -17,6 +17,8 @@ class FailureTriggerType(str, Enum):
     DEADLINE_CASCADING_FAILURE = "DEADLINE_CASCADING_FAILURE"
     SENSOR_BLINDNESS_TIMEOUT = "SENSOR_BLINDNESS_TIMEOUT"
     ACTUATOR_SATURATION = "ACTUATOR_SATURATION"
+    CONTROLLER_CRASH = "CONTROLLER_CRASH"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 
 
 @dataclass
@@ -53,12 +55,14 @@ class CausalChainNode:
         category: High-level subsystem category ('FAULT', 'TRANSPORT', 'COMPUTE', 'CONTROL', 'PHYSICS', 'SAFETY').
         summary: Human-readable explanation of the state change.
         metrics: Quantitative telemetry values at this state.
+        evidence_event_ids: IDs of specific execution events substantiating this state.
     """
     node_id: str
     timestamp: float
     category: str
     summary: str
     metrics: Dict[str, Any] = field(default_factory=dict)
+    evidence_event_ids: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -69,10 +73,14 @@ class CausalLink:
         source_node_id: Antecedent cause node ID.
         target_node_id: Consequent effect node ID.
         relation: Description of the causal mechanism (e.g. 'INDUCED_STALENESS', 'DELAYED_BRAKING').
+        confidence: Statistical confidence score between 0.0 and 1.0.
+        evidence: Concrete metrics and deltas substantiating the link.
     """
     source_node_id: str
     target_node_id: str
     relation: str
+    confidence: float = 1.0
+    evidence: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -99,7 +107,7 @@ class CausalDiagnosticReport:
         primary_root_cause: Executive summary of the primary failure cause.
         failure_trigger: The invariant breach details.
         causal_nodes: List of ordered causal chain nodes.
-        causal_links: Directed edges connecting causal nodes.
+        causal_links: Directed edges connecting causal nodes with confidence scores.
         anomalies_detected: Subsystem anomalies detected during analysis.
         contributing_fault_ids: Hardware fault IDs that directly contributed.
         patch_recommendations: Actionable recommendations for the auto-patcher.
@@ -142,11 +150,18 @@ class CausalDiagnosticReport:
                     "category": n.category,
                     "summary": n.summary,
                     "metrics": n.metrics,
+                    "evidence_event_ids": n.evidence_event_ids,
                 }
                 for n in self.causal_nodes
             ],
             "causal_links": [
-                {"source": l.source_node_id, "target": l.target_node_id, "relation": l.relation}
+                {
+                    "source": l.source_node_id,
+                    "target": l.target_node_id,
+                    "relation": l.relation,
+                    "confidence": round(l.confidence, 3),
+                    "evidence": l.evidence,
+                }
                 for l in self.causal_links
             ],
             "anomalies_detected": [

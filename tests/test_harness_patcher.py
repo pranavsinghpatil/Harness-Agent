@@ -1,4 +1,4 @@
-"""Unit tests for AutoCodePatcher and deterministic safety code hardening."""
+"""Unit tests for AutoCodePatcher, patch provenance, and deterministic safety code hardening."""
 
 from __future__ import annotations
 from harness.patcher.engine import AutoCodePatcher
@@ -6,7 +6,7 @@ from harness.models.patch import PatchValidationStatus, PatchStrategyType
 
 
 def test_auto_patcher_synthesizes_valid_hardened_code() -> None:
-    """Verify AutoCodePatcher generates valid syntax and diff."""
+    """Verify AutoCodePatcher generates valid syntax, diff, and provenance contract."""
     original_script = """
 from target_agents.base import BaseTargetAgent
 from sandbox.actuators.command import ActuatorCommand
@@ -22,3 +22,6 @@ class SimpleRover(BaseTargetAgent):
     assert len(patch_res.strategies_applied) > 0
     assert "def step(" in patch_res.patched_code
     assert "diff" in patch_res.unified_diff or "original_controller.py" in patch_res.unified_diff
+    assert patch_res.provenance is not None
+    assert patch_res.provenance.source_controller_hash != ""
+    assert patch_res.provenance.rationale != ""

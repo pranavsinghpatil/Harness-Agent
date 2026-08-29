@@ -13,6 +13,8 @@ from harness.models.evaluation import (
     EvaluationRequest,
     HarnessEvaluationResult,
     HarnessRunStatus,
+    ControllerHealth,
+    VerificationVerdict,
 )
 from harness.models.events import HarnessEvent, HarnessEventType, EventSeverity
 from harness.hardware.registry import default_hardware_registry
@@ -55,12 +57,6 @@ class RunManager:
         """
         eval_id = f"eval_{uuid.uuid4().hex[:8]}"
         scenario = get_scenario(request.scenario_id)
-
-        # Apply chaos fault overrides if provided
-        if request.chaos_fault_overrides:
-            scenario_copy = scenario.model_copy(deep=True)
-            # Merge fault overrides into scenario fault schedule
-            pass
 
         evaluation = HarnessEvaluation(
             evaluation_id=eval_id,
@@ -108,7 +104,6 @@ class RunManager:
         run_id = f"run_{uuid.uuid4().hex[:8]}_base"
         hardware = default_hardware_registry.get(evaluation.request.hardware_preset_id)
 
-        # Load target agent controller
         if evaluation.request.controller_code:
             target_agent = DynamicControllerLoader.load_from_code(
                 evaluation.request.controller_code, agent_id="baseline_target"
@@ -123,6 +118,7 @@ class RunManager:
             hardware_preset=hardware,
             target_agent=target_agent,
             seed=evaluation.request.seed,
+            chaos_fault_overrides=evaluation.request.chaos_fault_overrides,
             event_callback=self._broadcast_event,
         )
 
@@ -162,24 +158,42 @@ class RunManager:
             hardware_preset=hardware,
             target_agent=patched_agent,
             seed=evaluation.request.seed,
+            chaos_fault_overrides=evaluation.request.chaos_fault_overrides,
             event_callback=self._broadcast_event,
         )
 
         verify_run = session.execute()
         evaluation.verification_run = verify_run
 
-        # Compute final comparison verdict
+        # Evaluate 3-Pillar Verification Matrix
         baseline_run = evaluation.baseline_run
         base_violations = len(baseline_run.violations) if baseline_run else 0
         verify_violations = len(verify_run.violations)
         base_clearance = baseline_run.metrics.get("min_clearance", 0.0) if baseline_run else 0.0
         verify_clearance = verify_run.metrics.get("min_clearance", 0.0)
 
-        is_safe = verify_violations == 0 and verify_run.status != HarnessRunStatus.SAFETY_VIOLATION
+        safety_passed = (verify_violations == 0 and verify_run.status != HarnessRunStatus.SAFETY_VIOLATION)
+        health_passed = (verify_run.controller_health == ControllerHealth.HEALTHY and verify_run.status != HarnessRunStatus.CONTROLLER_CRASH)
+        behavior_passed = (verify_run.distance_traveled_m > 0.5 or verify_run.task_completed)
+
+        if not safety_passed:
+            verdict = VerificationVerdict.SAFETY_VIOLATION
+        elif not health_passed:
+            verdict = VerificationVerdict.CONTROLLER_CRASHED
+        elif not behavior_passed:
+            verdict = VerificationVerdict.TASK_INCOMPLETE
+        else:
+            verdict = VerificationVerdict.VERIFIED_SAFE
+
+        is_safe = (verdict == VerificationVerdict.VERIFIED_SAFE)
 
         evaluation.final_result = HarnessEvaluationResult(
             evaluation_id=evaluation.evaluation_id,
+            verdict=verdict,
             is_safe_under_test_conditions=is_safe,
+            safety_pillar_passed=safety_passed,
+            behavior_pillar_passed=behavior_passed,
+            runtime_health_pillar_passed=health_passed,
             baseline_passed=(base_violations == 0),
             verification_passed=is_safe,
             baseline_violations_count=base_violations,
@@ -187,7 +201,8 @@ class RunManager:
             min_clearance_baseline=base_clearance,
             min_clearance_verified=verify_clearance,
             improvement_summary=(
-                f"Verification complete on identical seed {evaluation.request.seed}. "
+                f"3-Pillar Verification: {verdict.value} (Safety: {'PASS' if safety_passed else 'FAIL'}, "
+                f"Behavior: {'PASS' if behavior_passed else 'FAIL'}, Runtime Health: {'PASS' if health_passed else 'FAIL'}). "
                 f"Violations reduced from {base_violations} to {verify_violations}. "
                 f"Min clearance improved from {base_clearance:.2f}m to {verify_clearance:.2f}m."
             ),

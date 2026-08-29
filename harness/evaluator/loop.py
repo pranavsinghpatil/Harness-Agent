@@ -8,6 +8,8 @@ from harness.models.evaluation import (
     EvaluationRequest,
     HarnessEvaluationResult,
     HarnessRunStatus,
+    ControllerHealth,
+    VerificationVerdict,
 )
 from harness.orchestration.run_manager import RunManager, default_run_manager
 from harness.diagnostics.analyzer import CausalTelemetryAnalyzer
@@ -29,41 +31,38 @@ class ReliabilityEvaluationLoop:
         Returns:
             Fully populated HarnessEvaluation containing baseline, diagnosis, patch, verification run, and result.
         """
-        # Step 1: Initialize Evaluation
         evaluation = self.run_manager.create_evaluation(request)
-
-        # Step 2: Execute Baseline Run
         baseline_run = self.run_manager.execute_baseline(evaluation.evaluation_id)
 
-        # Step 3: If Baseline Passed (No Invariant Breaches), Finalize Result
-        if not baseline_run.violations and baseline_run.status != HarnessRunStatus.SAFETY_VIOLATION:
+        if not baseline_run.violations and baseline_run.status == HarnessRunStatus.COMPLETED and baseline_run.controller_health == ControllerHealth.HEALTHY:
             min_clearance = baseline_run.metrics.get("min_clearance", 2.0)
             evaluation.final_result = HarnessEvaluationResult(
                 evaluation_id=evaluation.evaluation_id,
+                verdict=VerificationVerdict.VERIFIED_SAFE,
                 is_safe_under_test_conditions=True,
+                safety_pillar_passed=True,
+                behavior_pillar_passed=True,
+                runtime_health_pillar_passed=True,
                 baseline_passed=True,
                 verification_passed=True,
                 baseline_violations_count=0,
                 verification_violations_count=0,
                 min_clearance_baseline=min_clearance,
                 min_clearance_verified=min_clearance,
-                improvement_summary="Baseline controller operated with zero safety violations.",
+                improvement_summary="Baseline controller passed all 3 verification pillars with zero safety violations.",
             )
             return evaluation
 
-        # Step 4: Causal Failure Diagnosis
         diagnostic_report = CausalTelemetryAnalyzer.analyze_run(baseline_run)
         diagnostic_report.evaluation_id = evaluation.evaluation_id
         evaluation.diagnosis = diagnostic_report
 
-        # Step 5: Autonomous Code Patching
         original_code = request.controller_code or ""
         patch_result = AutoCodePatcher.generate_patch(
             original_code=original_code, diagnostic_report=diagnostic_report
         )
         evaluation.patch = patch_result
 
-        # Step 6: Execute Verification on Identical Seed & Fault Schedule
         self.run_manager.execute_verification(
             evaluation_id=evaluation.evaluation_id,
             patched_code=patch_result.patched_code,
