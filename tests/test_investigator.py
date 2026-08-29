@@ -59,6 +59,9 @@ def test_investigator_executes_candidates_and_preserves_evidence() -> None:
     assert result["runs"][1]["experiment"]["phase"] == "SCREEN"
     assert result["evidence"]["failed_experiments"] == 4
     assert result["evidence"]["tested_dimensions"]
+    assert result["hypotheses"]["hypotheses"]
+    assert result["falsification_plans"]
+    assert result["runs"][0]["evidence"] is not None
 
 
 def test_investigator_limits_a_short_run_without_spending_remaining_budget() -> None:
