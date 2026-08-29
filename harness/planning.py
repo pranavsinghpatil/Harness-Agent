@@ -8,6 +8,7 @@ ordering, or evidence integrity.
 
 from __future__ import annotations
 
+from copy import copy
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
@@ -426,6 +427,13 @@ class ExperimentPlanner:
                 return boundary
 
         return self._interaction_candidate()
+
+    def has_next_candidate(self) -> bool:
+        """Return whether another candidate exists without reserving it."""
+        preview: ExperimentPlanner = copy(self)
+        preview._planned = dict(self._planned)
+        candidate: Optional[ExperimentCandidate] = preview.plan_next()
+        return candidate is not None
 
     def observe(self, experiment_id: str, outcome: ExperimentOutcome) -> EvidenceRecord:
         """Attach an execution outcome and unlock the next planner decision."""

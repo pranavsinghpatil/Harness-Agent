@@ -187,9 +187,12 @@ class AutonomousInvestigator:
                 break
             self._execute_candidate(candidate)
         if max_experiments is not None and initial_planned_count < limit:
+            reached_limit: bool = self.planner.planned_count >= limit
+            natural_stop: bool = reached_limit and not self.planner.has_next_candidate()
             self._last_run_was_caller_limited = (
                 max_experiments < self.config.budget
-                and self.planner.planned_count >= limit
+                and reached_limit
+                and not natural_stop
             )
         elif max_experiments is None:
             self._last_run_was_caller_limited = False

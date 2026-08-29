@@ -87,6 +87,22 @@ def test_noop_limit_does_not_downgrade_exhausted_investigation() -> None:
     assert result["status"] == "BUDGET_EXHAUSTED"
 
 
+def test_exact_lower_limit_is_complete_when_planner_has_no_next_candidate() -> None:
+    investigator: AutonomousInvestigator = AutonomousInvestigator(
+        InvestigatorConfig(
+            objective="Finish the finite no-boundary search.",
+            budget=10,
+            max_boundary_steps=0,
+        ),
+        run_manager=FakeRunManager(),
+    )
+
+    result: dict[str, Any] = investigator.run(max_experiments=5).to_dict()
+
+    assert len(result["runs"]) == 5
+    assert result["status"] == "COMPLETE"
+
+
 def test_incomplete_completed_run_is_not_passing_evidence() -> None:
     run: HarnessRun = HarnessRun(
         status=HarnessRunStatus.COMPLETED,
