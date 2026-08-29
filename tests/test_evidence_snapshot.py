@@ -27,8 +27,8 @@ def test_snapshot_preserves_signal_provenance_and_event_order() -> None:
         "trace_1",
         [_frame(4, 0.04, 1.2), _frame(5, 0.05, 0.7)],
         [
-            {"event_id": "evt_2", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "INVARIANT_BREACHED", "source": "oracle", "sim_time": 0.05, "severity": "ERROR", "wall_time": 2.0},
-            {"event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT_INJECTED", "source": "faults", "sim_time": 0.01, "severity": "INFO", "wall_time": 1.0},
+            {"run_id": "run_1", "event_id": "evt_2", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "INVARIANT_BREACHED", "source": "oracle", "sim_time": 0.05, "severity": "ERROR", "wall_time": 2.0},
+            {"run_id": "run_1", "event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT_INJECTED", "source": "faults", "sim_time": 0.01, "severity": "INFO", "wall_time": 1.0},
         ],
     )
 
@@ -43,7 +43,7 @@ def test_snapshot_preserves_signal_provenance_and_event_order() -> None:
 
 def test_snapshot_rejects_invalid_event_time() -> None:
     try:
-        build_evidence_snapshot("run_1", "trace_1", [], [{"event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "sim_time": "later", "severity": "INFO", "wall_time": 1.0}])
+        build_evidence_snapshot("run_1", "trace_1", [], [{"run_id": "run_1", "event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "sim_time": "later", "severity": "INFO", "wall_time": 1.0}])
     except ValueError as exc:
         assert str(exc) == "event sim_time must be numeric"
     else:
@@ -51,7 +51,7 @@ def test_snapshot_rejects_invalid_event_time() -> None:
 
     for invalid_time in ("nan", float("inf")):
         try:
-            build_evidence_snapshot("run_1", "trace_1", [], [{"event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "sim_time": invalid_time, "severity": "INFO", "wall_time": 1.0}])
+            build_evidence_snapshot("run_1", "trace_1", [], [{"run_id": "run_1", "event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "sim_time": invalid_time, "severity": "INFO", "wall_time": 1.0}])
         except ValueError as exc:
             assert "finite" in str(exc)
         else:
@@ -76,7 +76,7 @@ def test_snapshot_omits_missing_or_nonfinite_measurements() -> None:
 def test_snapshot_freezes_nested_event_payload() -> None:
     payload: dict[str, object] = {"details": {"faults": ["camera"]}}
     snapshot: EvidenceSnapshot = build_evidence_snapshot(
-        "run_1", "trace_1", [], [{"event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "sim_time": 0.1, "severity": "INFO", "wall_time": 1.0, "payload": payload}]
+        "run_1", "trace_1", [], [{"run_id": "run_1", "event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "sim_time": 0.1, "severity": "INFO", "wall_time": 1.0, "payload": payload}]
     )
     payload["details"] = {"faults": ["changed"]}
 
@@ -90,10 +90,25 @@ def test_snapshot_freezes_nested_event_payload() -> None:
 
 
 def test_snapshot_rejects_missing_event_timestamp_and_preserves_identity() -> None:
-    event: dict[str, object] = {"event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "severity": "INFO", "wall_time": 1.0}
+    event: dict[str, object] = {"run_id": "run_1", "event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "severity": "INFO", "wall_time": 1.0}
     try:
         build_evidence_snapshot("run_1", "trace_1", [], [event])
     except ValueError as exc:
         assert "required fields" in str(exc)
     else:
         raise AssertionError("missing event timestamp should be rejected")
+
+
+def test_snapshot_rejects_cross_run_and_blank_event_identity() -> None:
+    event: dict[str, object] = {"run_id": "run_2", "event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "sim_time": 0.1, "severity": "INFO", "wall_time": 1.0}
+    for field, value in (("run_id", "run_2"), ("event_id", ""), ("evaluation_id", None)):
+        event[field] = value
+        try:
+            build_evidence_snapshot("run_1", "trace_1", [], [event])
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid event identity should be rejected")
+        event["run_id"] = "run_1"
+        event["event_id"] = "evt_1"
+        event["evaluation_id"] = "eval_1"
