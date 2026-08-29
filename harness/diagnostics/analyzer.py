@@ -1,10 +1,11 @@
-"""Causal telemetry analyzer extracting structured failure graphs and root-cause evidence."""
+"""Causal telemetry analyzer extracting evidence-backed failure graphs and root-cause evidence."""
 
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 from harness.models.evaluation import HarnessRun
+from harness.models.events import HarnessEvent, HarnessEventType
 from harness.models.diagnostics import (
     CausalDiagnosticReport,
     FailureTrigger,
@@ -16,7 +17,7 @@ from harness.models.diagnostics import (
 
 
 class CausalTelemetryAnalyzer:
-    """Reconstructs the causal chain of events leading to safety invariant breaches."""
+    """Reconstructs the evidence-backed causal chain of events leading to safety invariant breaches."""
 
     @classmethod
     def analyze_run(cls, run: HarnessRun) -> CausalDiagnosticReport:
@@ -26,11 +27,10 @@ class CausalTelemetryAnalyzer:
             run: HarnessRun instance containing telemetry frames, violations, and events.
 
         Returns:
-            CausalDiagnosticReport containing causal graph and patch recommendations.
+            CausalDiagnosticReport containing evidence-backed causal graph and recommendations.
         """
         report_id = f"diag_{uuid.uuid4().hex[:8]}"
 
-        # If run had no violations, return empty diagnostic report
         if not run.violations:
             return CausalDiagnosticReport(
                 report_id=report_id,
@@ -40,26 +40,16 @@ class CausalTelemetryAnalyzer:
                 markdown_summary="### ✅ Execution Safe\nNo invariant violations occurred.",
             )
 
-        # 1. Identify primary failure trigger from first critical violation
         first_violation = run.violations[0]
         trigger = cls._extract_failure_trigger(first_violation, run)
-
-        # 2. Extract telemetry anomalies
         anomalies = cls._detect_telemetry_anomalies(run, trigger.timestamp)
-
-        # 3. Identify active hardware faults
         contributing_faults = cls._identify_contributing_faults(run, trigger.timestamp)
 
-        # 4. Construct Causal Graph Nodes and Links
         nodes, links = cls._build_causal_graph(trigger, contributing_faults, anomalies, run)
-
-        # 5. Formulate Patch Recommendations
-        recommendations = cls._generate_patch_recommendations(trigger, contributing_faults)
-
-        # 6. Synthesize Primary Root Cause & Markdown Summary
-        root_cause_summary = cls._synthesize_root_cause(trigger, contributing_faults)
+        recommendations = cls._generate_patch_recommendations(trigger, contributing_faults, anomalies)
+        root_cause_summary = cls._synthesize_root_cause(trigger, contributing_faults, nodes, links)
         markdown_summary = cls._render_markdown_report(
-            report_id, trigger, contributing_faults, nodes, recommendations
+            report_id, trigger, contributing_faults, nodes, recommendations, root_cause_summary
         )
 
         return CausalDiagnosticReport(
@@ -92,8 +82,6 @@ class CausalTelemetryAnalyzer:
             trigger_type = FailureTriggerType.COLLISION
 
         t_breach = violation.timestamp
-
-        # Find closest telemetry frame to breach timestamp
         speed = 0.0
         clearance = 0.0
         if run.telemetry_frames:
@@ -120,11 +108,8 @@ class CausalTelemetryAnalyzer:
     def _detect_telemetry_anomalies(cls, run: HarnessRun, breach_time: float) -> List[TelemetryAnomaly]:
         """Detect subsystem anomalies prior to the violation."""
         anomalies: List[TelemetryAnomaly] = []
-
-        # Scan frames within 2.0s window before breach
         window_frames = [f for f in run.telemetry_frames if breach_time - 2.5 <= f.sim_time <= breach_time]
 
-        # Check for clearance drop rate anomaly
         if len(window_frames) >= 2:
             clearances = [f.min_clearance for f in window_frames]
             if min(clearances) < 0.5:
@@ -139,6 +124,21 @@ class CausalTelemetryAnalyzer:
                         evidence_values={"min_clearance": min(clearances)},
                     )
                 )
+
+        # Check for hardware compute anomalies (thermal or deadline misses)
+        throttled_frames = [f for f in window_frames if f.hardware_metrics.get("is_throttled", False)]
+        if throttled_frames:
+            anomalies.append(
+                TelemetryAnomaly(
+                    subsystem="hardware.thermal",
+                    anomaly_type="THERMAL_THROTTLING_ACTIVE",
+                    start_time=throttled_frames[0].sim_time,
+                    duration=len(throttled_frames) * 0.01,
+                    severity_score=0.85,
+                    description="Edge compute SoC entered thermal throttling, reducing CPU frequency.",
+                    evidence_values={"temperature_celsius": throttled_frames[-1].hardware_metrics.get("temperature_celsius")},
+                )
+            )
 
         return anomalies
 
@@ -159,79 +159,119 @@ class CausalTelemetryAnalyzer:
         faults: List[str],
         anomalies: List[TelemetryAnomaly],
         run: HarnessRun,
-    ) -> tuple[List[CausalChainNode], List[CausalLink]]:
-        """Construct the sequence of causal nodes and links."""
+    ) -> Tuple[List[CausalChainNode], List[CausalLink]]:
+        """Construct an empirical, evidence-backed Directed Acyclic Graph (DAG)."""
         nodes: List[CausalChainNode] = []
         links: List[CausalLink] = []
+        prev_node_id: Optional[str] = None
 
-        # Node 1: Hardware Fault Injection
-        fault_summary = ", ".join(faults) if faults else "Compound network jitter & sensor lag"
-        n1 = CausalChainNode(
-            node_id="node_01_fault",
-            timestamp=max(0.0, trigger.timestamp - 1.8),
-            category="HARDWARE_FAULT",
-            summary=f"Hardware perturbations active: {fault_summary}",
-            metrics={"active_faults": faults},
-        )
-        nodes.append(n1)
+        # 1. Hardware Fault Node (if empirically present)
+        if faults:
+            n_fault = CausalChainNode(
+                node_id="node_01_fault",
+                timestamp=max(0.0, trigger.timestamp - 1.8),
+                category="HARDWARE_FAULT",
+                summary=f"Hardware perturbations activated: {', '.join(faults)}",
+                metrics={"active_faults": faults},
+                evidence_event_ids=[e.event_id for e in run.events if e.type == HarnessEventType.FAULT_INJECTED],
+            )
+            nodes.append(n_fault)
+            prev_node_id = n_fault.node_id
 
-        # Node 2: Transport & Compute Observation Staleness
-        n2 = CausalChainNode(
-            node_id="node_02_staleness",
-            timestamp=max(0.0, trigger.timestamp - 1.0),
-            category="TRANSPORT_STALENESS",
-            summary=f"Sensor observation delivery delayed (staleness ~{trigger.observation_age_s:.2f}s)",
-            metrics={"observation_age_s": trigger.observation_age_s},
-        )
-        nodes.append(n2)
-        links.append(CausalLink("node_01_fault", "node_02_staleness", "INDUCED_TRANSPORT_DELAY"))
+        # 2. Hardware Compute Bottleneck Node (if thermal/deadline misses detected)
+        thermal_anomaly = next((a for a in anomalies if "thermal" in a.subsystem), None)
+        if thermal_anomaly:
+            n_compute = CausalChainNode(
+                node_id="node_02_compute",
+                timestamp=thermal_anomaly.start_time,
+                category="COMPUTE_BOTTLENECK",
+                summary="Thermal throttle reduced edge scheduler execution budget",
+                metrics=thermal_anomaly.evidence_values,
+            )
+            nodes.append(n_compute)
+            if prev_node_id:
+                links.append(CausalLink(prev_node_id, n_compute.node_id, "INDUCED_THERMAL_LOAD", confidence=0.92, evidence=thermal_anomaly.evidence_values))
+            prev_node_id = n_compute.node_id
 
-        # Node 3: Target Controller Decision
-        n3 = CausalChainNode(
-            node_id="node_03_control",
-            timestamp=max(0.0, trigger.timestamp - 0.5),
+        # 3. Transport / Observation Staleness Node (if observation age > 0.20s)
+        if trigger.observation_age_s > 0.20:
+            n_stale = CausalChainNode(
+                node_id="node_03_staleness",
+                timestamp=max(0.0, trigger.timestamp - 0.8),
+                category="TRANSPORT_STALENESS",
+                summary=f"Perception observation delivery delayed (staleness ~{trigger.observation_age_s:.2f}s)",
+                metrics={"observation_age_s": trigger.observation_age_s},
+            )
+            nodes.append(n_stale)
+            if prev_node_id:
+                links.append(CausalLink(prev_node_id, n_stale.node_id, "TRANSPORT_OR_PROCESSING_DELAY", confidence=0.95, evidence={"observation_age_s": trigger.observation_age_s}))
+            prev_node_id = n_stale.node_id
+
+        # 4. Controller Action Node
+        n_ctrl = CausalChainNode(
+            node_id="node_04_control",
+            timestamp=max(0.0, trigger.timestamp - 0.3),
             category="CONTROLLER_DECISION",
-            summary=f"Controller operated on stale perception and maintained speed ({trigger.vehicle_speed:.1f}m/s)",
+            summary=f"Controller maintained speed ({trigger.vehicle_speed:.1f} m/s) with insufficient braking distance",
             metrics={"speed_mps": trigger.vehicle_speed},
         )
-        nodes.append(n3)
-        links.append(CausalLink("node_02_staleness", "node_03_control", "OBSERVED_OUTDATED_STATE"))
+        nodes.append(n_ctrl)
+        if prev_node_id:
+            links.append(CausalLink(prev_node_id, n_ctrl.node_id, "CONTROL_ON_DEGRADED_STATE", confidence=0.88, evidence={"vehicle_speed": trigger.vehicle_speed}))
+        prev_node_id = n_ctrl.node_id
 
-        # Node 4: Late Actuation & Physical Impact
-        n4 = CausalChainNode(
-            node_id="node_04_impact",
+        # 5. Safety Invariant Breach Node
+        n_breach = CausalChainNode(
+            node_id="node_05_breach",
             timestamp=trigger.timestamp,
             category="SAFETY_BREACH",
             summary=f"Kinetic stopping distance exceeded clearance -> {trigger.trigger_type.value} with {trigger.entity_id}",
             metrics={"clearance_m": trigger.clearance, "speed_mps": trigger.vehicle_speed},
         )
-        nodes.append(n4)
-        links.append(CausalLink("node_03_control", "node_04_impact", "INSUFFICIENT_STOPPING_MARGIN"))
+        nodes.append(n_breach)
+        links.append(CausalLink(prev_node_id, n_breach.node_id, "INSUFFICIENT_STOPPING_MARGIN", confidence=0.99, evidence={"clearance": trigger.clearance, "speed": trigger.vehicle_speed}))
 
         return nodes, links
 
     @classmethod
     def _generate_patch_recommendations(
-        cls, trigger: FailureTrigger, faults: List[str]
+        cls, trigger: FailureTrigger, faults: List[str], anomalies: List[TelemetryAnomaly]
     ) -> List[str]:
-        """Formulate specific hardening recommendations."""
+        """Formulate specific evidence-based hardening recommendations."""
         recs: List[str] = [
             "Inject dynamic velocity-scaled stopping distance buffer: d_stop(v) = v*t_reaction + (v^2)/(2*a_brake) + margin.",
             "Inject observation staleness guard: if sensor age > 0.35s, immediately cut throttle and initiate emergency braking.",
         ]
         if any("lidar" in f.lower() for f in faults):
             recs.append("Inject multi-sensor fusion fallback: fuse camera semantic bounding boxes when LiDAR drops out.")
-        if any("brake" in f.lower() or "delay" in f.lower() for f in faults):
-            recs.append("Apply hardware transport delay compensation: increase lookahead lead time by +250ms.")
+        if any("thermal" in a.subsystem for a in anomalies):
+            recs.append("Apply thermal-aware compute budget compensation: throttle velocity limits under edge thermal load.")
         return recs
 
     @classmethod
-    def _synthesize_root_cause(cls, trigger: FailureTrigger, faults: List[str]) -> str:
-        """Create a single concise sentence summarizing the root cause."""
-        fault_str = f"compound hardware faults ({', '.join(faults)})" if faults else "hardware transport latency"
+    def _synthesize_root_cause(
+        cls, trigger: FailureTrigger, faults: List[str], nodes: List[CausalChainNode], links: List[CausalLink]
+    ) -> str:
+        """Create a precise sentence summarizing root cause strictly from empirical evidence."""
+        if faults and trigger.observation_age_s > 0.20:
+            return (
+                f"Safety violation ({trigger.trigger_type.value}) at t={trigger.timestamp:.2f}s caused by "
+                f"hardware perturbations ({', '.join(faults)}) inducing sensor staleness ({trigger.observation_age_s:.2f}s), "
+                f"resulting in delayed braking."
+            )
+        elif trigger.observation_age_s > 0.20:
+            return (
+                f"Safety violation ({trigger.trigger_type.value}) at t={trigger.timestamp:.2f}s caused by "
+                f"sensor transport delay (staleness {trigger.observation_age_s:.2f}s) without failsafe braking."
+            )
+        elif faults:
+            return (
+                f"Safety violation ({trigger.trigger_type.value}) at t={trigger.timestamp:.2f}s triggered by "
+                f"active hardware perturbations ({', '.join(faults)})."
+            )
         return (
             f"Safety violation ({trigger.trigger_type.value}) at t={trigger.timestamp:.2f}s caused by "
-            f"{fault_str} inducing sensor staleness ({trigger.observation_age_s:.2f}s), leading to late braking."
+            f"controller maintaining excessive velocity ({trigger.vehicle_speed:.1f} m/s) with insufficient safety margin."
         )
 
     @classmethod
@@ -242,6 +282,7 @@ class CausalTelemetryAnalyzer:
         faults: List[str],
         nodes: List[CausalChainNode],
         recs: List[str],
+        root_cause: str,
     ) -> str:
         """Render clean, readable markdown diagnostic report."""
         fault_list = "".join(f"- `{f}`\n" for f in faults) if faults else "- None\n"
@@ -254,11 +295,11 @@ class CausalTelemetryAnalyzer:
         return f"""## 🚨 Causal Failure Diagnostic Report (`{report_id}`)
 
 ### 💥 Primary Root Cause
-**{cls._synthesize_root_cause(trigger, faults)}**
+**{root_cause}**
 
 ---
 
-### ⛓️ Causal Failure Chain
+### ⛓️ Evidence-Backed Causal Graph
 {causal_steps}
 ---
 

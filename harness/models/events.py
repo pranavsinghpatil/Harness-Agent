@@ -24,6 +24,8 @@ class HarnessEventType(str, Enum):
     DEADLINE_MISSED = "DEADLINE_MISSED"
     THERMAL_THROTTLED = "THERMAL_THROTTLED"
     COMMAND_ISSUED = "COMMAND_ISSUED"
+    CONTROLLER_EXCEPTION = "CONTROLLER_EXCEPTION"
+    CONTROLLER_CRASHED = "CONTROLLER_CRASHED"
     INVARIANT_BREACHED = "INVARIANT_BREACHED"
     COLLISION_DETECTED = "COLLISION_DETECTED"
     CLEARANCE_WARNING = "CLEARANCE_WARNING"
@@ -50,13 +52,13 @@ class HarnessEvent:
         evaluation_id: Unique identifier of the top-level HarnessEvaluation.
         run_id: Identifier of the specific simulation run within the evaluation.
         episode_id: Underlying simulation episode identifier.
-        event_id: Unique event identifier.
         sim_time: Monotonic simulation clock time in seconds.
-        wall_time: System wall clock UNIX timestamp in seconds.
         source: Subsystem or component emitting the event (e.g. 'transport.camera').
         type: Standardized HarnessEventType classification.
         severity: Event severity level.
         payload: Event-specific metadata dictionary.
+        event_id: Unique event identifier.
+        wall_time: System wall clock UNIX timestamp in seconds.
     """
     evaluation_id: str
     run_id: str

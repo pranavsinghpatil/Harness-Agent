@@ -11,9 +11,11 @@ from target_agents.reference_agent.agent import ReferenceAutonomousAgent
 from sandbox.actuators.command import ActuatorCommand
 from sandbox.sensors.packet import SensorPacket
 from harness.controllers.validator import ControllerValidator
+from harness.models.evaluation import ControllerHealth
 
 # Alias VehicleCommand to ActuatorCommand for backward compatibility
 VehicleCommand = ActuatorCommand
+
 
 def _safe_import(name: str, globals: Any = None, locals: Any = None, fromlist: Any = (), level: int = 0) -> Any:
     """Restricted __import__ hook preventing forbidden modules from being imported dynamically."""
@@ -50,6 +52,9 @@ class ScriptFunctionAgentWrapper(BaseTargetAgent):
         super().__init__(agent_id)
         self._control_fn = control_fn
         self._last_packets: list[Any] = []
+        self.health: ControllerHealth = ControllerHealth.HEALTHY
+        self.last_exception: Optional[str] = None
+        self.failsafe_activated: bool = False
         try:
             self._param_count = len(inspect.signature(control_fn).parameters)
         except Exception:
@@ -63,8 +68,11 @@ class ScriptFunctionAgentWrapper(BaseTargetAgent):
         initial_y: float = 0.0,
         initial_heading: float = 0.0,
     ) -> None:
-        """Reset internal packet buffer."""
+        """Reset internal packet buffer and controller health state."""
         self._last_packets = []
+        self.health = ControllerHealth.HEALTHY
+        self.last_exception = None
+        self.failsafe_activated = False
 
     def receive_sensor_packets(self, packets: list[Any], current_sim_time: float) -> None:
         """Store delivered sensor packets for consumption in step()."""
@@ -90,7 +98,10 @@ class ScriptFunctionAgentWrapper(BaseTargetAgent):
                     emergency_stop=bool(cmd.get("emergency_stop", False)),
                 )
             return ActuatorCommand()
-        except Exception:
+        except Exception as e:
+            self.health = ControllerHealth.EXCEPTION_RAISED
+            self.last_exception = str(e)
+            self.failsafe_activated = True
             return ActuatorCommand(brake=1.0)
 
 

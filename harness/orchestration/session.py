@@ -1,6 +1,7 @@
 """SandboxSession orchestrating isolated simulation execution and telemetry recording."""
 
 from __future__ import annotations
+import math
 from typing import Any, Callable, Dict, List, Optional
 import time
 
@@ -11,7 +12,12 @@ from target_agents.base import BaseTargetAgent
 from harness.hardware.presets import HardwarePreset
 from harness.hardware.adapter import HardwareAdapter
 from harness.models.events import HarnessEvent, HarnessEventType, EventSeverity
-from harness.models.evaluation import HarnessRun, HarnessRunStatus
+from harness.models.evaluation import (
+    HarnessRun,
+    HarnessRunStatus,
+    ControllerHealth,
+    RunConfigFingerprint,
+)
 
 
 class SandboxSession:
@@ -36,6 +42,7 @@ class SandboxSession:
         self.seed = seed if seed is not None else (scenario.seed if scenario else 42)
         self.chaos_fault_overrides = chaos_fault_overrides
         self.event_callback = event_callback
+        self._events: List[HarnessEvent] = []
 
         sc_copy = scenario.model_copy(deep=True) if scenario else None
         if sc_copy and seed is not None:
@@ -52,8 +59,28 @@ class SandboxSession:
             scenario=sc_copy,
             target_agent=self.target_agent,
             run_id=self.run_id,
+            event_listener=self._on_sandbox_event,
         )
-        self._events: List[HarnessEvent] = []
+
+    def _on_sandbox_event(self, source: str, event_type_str: str, severity_str: str, payload: Dict[str, Any]) -> None:
+        """Handles granular runtime events emitted by the sandbox subsystems."""
+        try:
+            evt_type = HarnessEventType(event_type_str)
+        except ValueError:
+            evt_type = HarnessEventType.SIMULATION_STEP
+
+        try:
+            sev = EventSeverity(severity_str)
+        except ValueError:
+            sev = EventSeverity.INFO
+
+        self._emit_event(
+            event_type=evt_type,
+            message=payload.get("message", f"Runtime event from {source}"),
+            payload=payload,
+            severity=sev,
+            source=source,
+        )
 
     def execute(self, max_sim_time: Optional[float] = None) -> HarnessRun:
         """Execute the simulation run to completion and package into HarnessRun.
@@ -77,17 +104,19 @@ class SandboxSession:
         manifest, frames = self._env.run_episode(max_sim_time=effective_max_time)
         wall_duration = time.time() - wall_start
 
+        ctrl_health = getattr(self.target_agent, "health", ControllerHealth.HEALTHY)
         fatal_violations = [
             v for v in self._env.safety.violations
             if getattr(v.severity, "value", str(v.severity)).lower() in ("fatal", "critical")
         ]
-        status = (
-            HarnessRunStatus.SAFETY_VIOLATION
-            if manifest.status in ("SAFETY_VIOLATION", "safety_violation") or len(fatal_violations) > 0
-            else HarnessRunStatus.COMPLETED
-        )
 
-        self._emit_violation_events()
+        if ctrl_health != ControllerHealth.HEALTHY:
+            status = HarnessRunStatus.CONTROLLER_CRASH
+        elif manifest.status in ("SAFETY_VIOLATION", "safety_violation") or len(fatal_violations) > 0:
+            status = HarnessRunStatus.SAFETY_VIOLATION
+        else:
+            status = HarnessRunStatus.COMPLETED
+
         self._emit_event(
             HarnessEventType.SIMULATION_TERMINATED,
             f"Simulation run '{self.run_id}' finished with status: {status.value}.",
@@ -95,12 +124,24 @@ class SandboxSession:
         )
 
         metrics = self._calculate_telemetry_metrics(frames, manifest.violations_count)
+        dist_traveled = self._calculate_distance_traveled(frames)
+        task_completed = (manifest.status == "goal_reached")
+
+        fingerprint = RunConfigFingerprint.compute(
+            scenario=self.scenario,
+            hardware_id=self.hardware_preset.id,
+            controller_code=getattr(self.target_agent, "source_code", None),
+            seed=self.seed,
+        )
 
         return HarnessRun(
             run_id=self.run_id,
             evaluation_id=self.evaluation_id,
             episode_id=manifest.run_id,
             status=status,
+            controller_health=ctrl_health,
+            task_completed=task_completed,
+            distance_traveled_m=dist_traveled,
             sim_duration_s=manifest.sim_duration_seconds,
             wall_duration_s=wall_duration,
             trace_hash=manifest.trace_hash,
@@ -108,17 +149,20 @@ class SandboxSession:
             events=list(self._events),
             violations=list(self._env.safety.violations),
             metrics=metrics,
+            fingerprint=fingerprint,
         )
 
-    def _emit_violation_events(self) -> None:
-        """Broadcasts INVARIANT_BREACHED events for all recorded violations."""
-        for v in self._env.safety.violations:
-            self._emit_event(
-                HarnessEventType.INVARIANT_BREACHED,
-                v.description,
-                {"rule_name": v.rule_name, "severity": str(v.severity), "details": v.details},
-                severity=EventSeverity.CRITICAL,
-            )
+    def _calculate_distance_traveled(self, frames: List[Any]) -> float:
+        """Calculates Euclidean displacement between initial and terminal vehicle positions."""
+        if not frames or len(frames) < 2:
+            return 0.0
+        f0_state = frames[0].vehicle_state
+        f_end_state = frames[-1].vehicle_state
+        x0 = f0_state.get("x", 0.0) if isinstance(f0_state, dict) else getattr(f0_state, "x", 0.0)
+        y0 = f0_state.get("y", 0.0) if isinstance(f0_state, dict) else getattr(f0_state, "y", 0.0)
+        x1 = f_end_state.get("x", 0.0) if isinstance(f_end_state, dict) else getattr(f_end_state, "x", 0.0)
+        y1 = f_end_state.get("y", 0.0) if isinstance(f_end_state, dict) else getattr(f_end_state, "y", 0.0)
+        return math.hypot(x1 - x0, y1 - y0)
 
     def _calculate_telemetry_metrics(self, frames: List[Any], violations_count: int) -> Dict[str, Any]:
         """Aggregates kinematic velocity and clearance metrics from telemetry frames."""
@@ -140,6 +184,7 @@ class SandboxSession:
         message: str,
         payload: Dict[str, Any],
         severity: EventSeverity = EventSeverity.INFO,
+        source: str = "harness.session",
     ) -> None:
         """Helper to create and dispatch a HarnessEvent."""
         evt = HarnessEvent(
@@ -147,7 +192,7 @@ class SandboxSession:
             run_id=self.run_id,
             episode_id=self.run_id,
             sim_time=self._env.clock.current_time if hasattr(self._env, "clock") else 0.0,
-            source="harness.session",
+            source=source,
             type=event_type,
             severity=severity,
             payload={"message": message, **payload},

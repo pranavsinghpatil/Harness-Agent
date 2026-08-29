@@ -1,8 +1,10 @@
-"""Canonical HarnessEvaluation data backbone and top-level run contracts."""
+"""Canonical HarnessEvaluation data backbone, 3-pillar verification matrix, and run fingerprints."""
 
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
+import hashlib
+import json
 from typing import Any, Dict, List, Optional
 import uuid
 import time
@@ -22,8 +24,26 @@ class HarnessRunStatus(str, Enum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     SAFETY_VIOLATION = "SAFETY_VIOLATION"
+    CONTROLLER_CRASH = "CONTROLLER_CRASH"
     TIMEOUT = "TIMEOUT"
     ERROR = "ERROR"
+
+
+class ControllerHealth(str, Enum):
+    """Health classification of the target controller during runtime execution."""
+    HEALTHY = "HEALTHY"
+    EXCEPTION_RAISED = "EXCEPTION_RAISED"
+    TIMEOUT = "TIMEOUT"
+    INVALID_COMMAND = "INVALID_COMMAND"
+
+
+class VerificationVerdict(str, Enum):
+    """Rigorous classification of post-patch verification outcomes."""
+    VERIFIED_SAFE = "VERIFIED_SAFE"
+    NOT_PROVEN_SAFE = "NOT_PROVEN_SAFE"
+    SAFETY_VIOLATION = "SAFETY_VIOLATION"
+    CONTROLLER_CRASHED = "CONTROLLER_CRASHED"
+    TASK_INCOMPLETE = "TASK_INCOMPLETE"
 
 
 class EvaluationMode(str, Enum):
@@ -35,26 +55,81 @@ class EvaluationMode(str, Enum):
 
 
 @dataclass
-class HarnessRun:
-    """Represents a single simulation execution (baseline or verification) within an evaluation.
+class RunConfigFingerprint:
+    """Bit-exact SHA-256 fingerprint certifying experimental identity across runs.
 
     Attributes:
-        run_id: Unique run identifier.
-        evaluation_id: Parent evaluation ID.
-        episode_id: Simulation episode identifier.
-        status: Final execution outcome.
-        sim_duration_s: Total simulated time elapsed.
-        wall_duration_s: Real-world execution time in seconds.
-        trace_hash: Bit-exact SHA-256 hash of all recorded telemetry frames.
-        telemetry_frames: Recorded time-series frames.
-        events: All emitted lifecycle and subsystem events.
-        violations: Safety invariant breaches detected during this run.
-        metrics: Summary physics and hardware performance metrics.
+        scenario_hash: SHA-256 of world layout, goal, and obstacles.
+        hardware_preset_id: Target board profile ID.
+        fault_schedule_hash: SHA-256 of deterministic fault injection timeline.
+        safety_policy_hash: SHA-256 of invariant threshold rules.
+        controller_hash: SHA-256 of controller source code.
+        seed: Master random generator seed.
+        composite_hash: Combined SHA-256 certifying full environment reproducibility.
     """
+    scenario_hash: str
+    hardware_preset_id: str
+    fault_schedule_hash: str
+    safety_policy_hash: str
+    controller_hash: str
+    seed: int
+    composite_hash: str = ""
+
+    @classmethod
+    def compute(
+        cls,
+        scenario: Optional[ScenarioDefinition],
+        hardware_id: str,
+        controller_code: Optional[str],
+        seed: int,
+    ) -> RunConfigFingerprint:
+        """Compute bit-exact SHA-256 fingerprint from scenario and controller configuration."""
+        sc_dump = scenario.model_dump_json() if scenario else "{}"
+        faults_dump = json.dumps([f.model_dump() for f in (scenario.fault_schedule if scenario else [])], sort_keys=True)
+        safety_dump = json.dumps(scenario.safety_thresholds if scenario else {}, sort_keys=True)
+        ctrl_text = controller_code or ""
+
+        h_sc = hashlib.sha256(sc_dump.encode("utf-8")).hexdigest()[:16]
+        h_faults = hashlib.sha256(faults_dump.encode("utf-8")).hexdigest()[:16]
+        h_safety = hashlib.sha256(safety_dump.encode("utf-8")).hexdigest()[:16]
+        h_ctrl = hashlib.sha256(ctrl_text.encode("utf-8")).hexdigest()[:16]
+
+        composite_raw = f"{h_sc}|{hardware_id}|{h_faults}|{h_safety}|{h_ctrl}|{seed}"
+        composite_hash = hashlib.sha256(composite_raw.encode("utf-8")).hexdigest()
+
+        return cls(
+            scenario_hash=h_sc,
+            hardware_preset_id=hardware_id,
+            fault_schedule_hash=h_faults,
+            safety_policy_hash=h_safety,
+            controller_hash=h_ctrl,
+            seed=seed,
+            composite_hash=composite_hash,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize fingerprint to dictionary."""
+        return {
+            "scenario_hash": self.scenario_hash,
+            "hardware_preset_id": self.hardware_preset_id,
+            "fault_schedule_hash": self.fault_schedule_hash,
+            "safety_policy_hash": self.safety_policy_hash,
+            "controller_hash": self.controller_hash,
+            "seed": self.seed,
+            "composite_hash": self.composite_hash,
+        }
+
+
+@dataclass
+class HarnessRun:
+    """Represents a single simulation execution (baseline or verification) within an evaluation."""
     run_id: str = field(default_factory=lambda: f"run_{uuid.uuid4().hex[:8]}")
     evaluation_id: str = ""
     episode_id: str = ""
     status: HarnessRunStatus = HarnessRunStatus.PENDING
+    controller_health: ControllerHealth = ControllerHealth.HEALTHY
+    task_completed: bool = False
+    distance_traveled_m: float = 0.0
     sim_duration_s: float = 0.0
     wall_duration_s: float = 0.0
     trace_hash: str = ""
@@ -62,6 +137,7 @@ class HarnessRun:
     events: List[HarnessEvent] = field(default_factory=list)
     violations: List[SafetyViolation] = field(default_factory=list)
     metrics: Dict[str, Any] = field(default_factory=dict)
+    fingerprint: Optional[RunConfigFingerprint] = None
 
     def to_dict(self, include_frames: bool = False) -> Dict[str, Any]:
         """Serialize run to dictionary."""
@@ -70,10 +146,14 @@ class HarnessRun:
             "evaluation_id": self.evaluation_id,
             "episode_id": self.episode_id,
             "status": self.status.value if isinstance(self.status, Enum) else str(self.status),
+            "controller_health": self.controller_health.value if isinstance(self.controller_health, Enum) else str(self.controller_health),
+            "task_completed": self.task_completed,
+            "distance_traveled_m": round(self.distance_traveled_m, 2),
             "sim_duration_s": round(self.sim_duration_s, 4),
             "wall_duration_s": round(self.wall_duration_s, 4),
             "trace_hash": self.trace_hash,
             "violations_count": len(self.violations),
+            "fingerprint": self.fingerprint.to_dict() if self.fingerprint else None,
             "violations": [
                 {
                     "rule_name": v.rule_name,
@@ -107,17 +187,7 @@ class HarnessRun:
 
 @dataclass
 class EvaluationRequest:
-    """Parameters required to initiate a new HarnessEvaluation.
-
-    Attributes:
-        hardware_preset_id: Selected edge hardware profile (e.g. 'RDK_X5').
-        scenario_id: Target scenario identifier.
-        controller_code: Optional custom Python controller script (uses default if None).
-        seed: Random seed for bit-exact repeatability.
-        mode: Operational mode.
-        chaos_fault_overrides: Optional runtime fault injections.
-        metadata: User or testbench metadata.
-    """
+    """Parameters required to initiate a new HarnessEvaluation."""
     hardware_preset_id: str = "RDK_X5"
     scenario_id: str = "showcase_perturbed_failure"
     controller_code: Optional[str] = None
@@ -129,22 +199,13 @@ class EvaluationRequest:
 
 @dataclass
 class HarnessEvaluationResult:
-    """Final outcome and verification metrics comparing baseline vs patched execution.
-
-    Attributes:
-        evaluation_id: Parent evaluation ID.
-        is_safe_under_test_conditions: True if the verified run had zero invariant breaches.
-        baseline_passed: Whether the baseline run was safe.
-        verification_passed: Whether the post-patch run was safe.
-        baseline_violations_count: Number of violations in baseline.
-        verification_violations_count: Number of violations in verification.
-        min_clearance_baseline: Minimum clearance observed in baseline (meters).
-        min_clearance_verified: Minimum clearance observed post-patch (meters).
-        improvement_summary: Natural language summary of the reliability gain.
-        audit_timestamp: UNIX timestamp of verification completion.
-    """
+    """Final 3-pillar outcome and verification metrics comparing baseline vs verified execution."""
     evaluation_id: str
+    verdict: VerificationVerdict
     is_safe_under_test_conditions: bool
+    safety_pillar_passed: bool
+    behavior_pillar_passed: bool
+    runtime_health_pillar_passed: bool
     baseline_passed: bool
     verification_passed: bool
     baseline_violations_count: int
@@ -158,7 +219,11 @@ class HarnessEvaluationResult:
         """Serialize evaluation result to dictionary."""
         return {
             "evaluation_id": self.evaluation_id,
+            "verdict": self.verdict.value if isinstance(self.verdict, Enum) else str(self.verdict),
             "is_safe_under_test_conditions": self.is_safe_under_test_conditions,
+            "safety_pillar_passed": self.safety_pillar_passed,
+            "behavior_pillar_passed": self.behavior_pillar_passed,
+            "runtime_health_pillar_passed": self.runtime_health_pillar_passed,
             "baseline_passed": self.baseline_passed,
             "verification_passed": self.verification_passed,
             "baseline_violations_count": self.baseline_violations_count,
@@ -172,19 +237,7 @@ class HarnessEvaluationResult:
 
 @dataclass
 class HarnessEvaluation:
-    """The central domain entity connecting the entire closed-loop reliability program.
-
-    Attributes:
-        evaluation_id: Unique evaluation identifier.
-        created_at: Creation timestamp.
-        request: Initial evaluation parameters.
-        scenario: Concrete scenario definition executed.
-        baseline_run: Pre-patch execution trace and telemetry.
-        diagnosis: Causal failure diagnosis (if baseline had violations).
-        patch: Synthesized code patch (if baseline had violations).
-        verification_run: Post-patch execution trace on identical seed.
-        final_result: Comparison metrics and verification certificate.
-    """
+    """The central domain entity connecting the entire closed-loop reliability program."""
     evaluation_id: str = field(default_factory=lambda: f"eval_{uuid.uuid4().hex[:8]}")
     created_at: float = field(default_factory=time.time)
     request: EvaluationRequest = field(default_factory=EvaluationRequest)
