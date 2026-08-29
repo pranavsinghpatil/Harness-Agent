@@ -14,6 +14,7 @@ from harness.tools.canonical_tools import (
     diagnose_failure,
     auto_patch_controller,
     verify_patch,
+    investigate_reliability,
 )
 
 
@@ -98,6 +99,23 @@ class MCPServerHandler:
                 "required": ["evaluation_id", "patched_code"],
             },
         },
+        {
+            "name": "investigate_reliability",
+            "description": "Autonomously choose, execute, and compare baseline, perturbation, boundary, and interaction experiments within a hard budget.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "objective": {"type": "string", "description": "Reliability question to investigate"},
+                    "hardware_preset_id": {"type": "string", "default": "RDK_X5"},
+                    "scenario_id": {"type": "string", "default": "showcase_normal_baseline"},
+                    "controller_code": {"type": "string", "description": "Optional target controller Python code"},
+                    "seed": {"type": "integer", "default": 1337},
+                    "budget": {"type": "integer", "default": 12},
+                    "max_boundary_steps": {"type": "integer", "default": 3},
+                },
+                "required": ["objective"],
+            },
+        },
     ]
 
     @classmethod
@@ -140,6 +158,16 @@ class MCPServerHandler:
             return verify_patch(
                 evaluation_id=arguments["evaluation_id"],
                 patched_code=arguments["patched_code"],
+            )
+        elif tool_name == "investigate_reliability":
+            return investigate_reliability(
+                objective=arguments["objective"],
+                hardware_preset_id=arguments.get("hardware_preset_id", "RDK_X5"),
+                scenario_id=arguments.get("scenario_id", "showcase_normal_baseline"),
+                controller_code=arguments.get("controller_code"),
+                seed=arguments.get("seed", 1337),
+                budget=arguments.get("budget", 12),
+                max_boundary_steps=arguments.get("max_boundary_steps", 3),
             )
         else:
             raise ValueError(f"Unknown tool: '{tool_name}'")

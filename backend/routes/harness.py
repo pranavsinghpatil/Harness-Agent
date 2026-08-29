@@ -12,6 +12,7 @@ from harness.models.patch import PatchStrategyType
 from harness.evaluator.loop import ReliabilityEvaluationLoop
 from harness.diagnostics.analyzer import CausalTelemetryAnalyzer
 from harness.patcher.engine import AutoCodePatcher
+from harness.investigator import AutonomousInvestigator, InvestigatorConfig
 from sandbox.api.tools import get_scenario
 
 router = APIRouter(prefix="/api/harness", tags=["harness"])
@@ -32,6 +33,16 @@ class PatchControllerPayload(BaseModel):
 
 class VerifyPatchPayload(BaseModel):
     patched_code: str = Field(description="Hardened controller Python source code to verify")
+
+
+class InvestigationPayload(BaseModel):
+    objective: str = Field(min_length=1, description="Reliability question the harness must investigate")
+    hardware_preset_id: str = Field(default="RDK_X5", description="Target hardware board preset ID")
+    scenario_id: str = Field(default="showcase_normal_baseline", description="Healthy baseline scenario")
+    controller_code: Optional[str] = Field(default=None, description="Optional custom controller Python code")
+    seed: int = Field(default=1337, description="Random seed for repeatable experiments")
+    budget: int = Field(default=12, ge=1, le=100, description="Maximum number of experiments")
+    max_boundary_steps: int = Field(default=3, ge=0, le=10, description="Maximum binary refinements per failed dimension")
 
 
 @router.get("/hardware-presets")
@@ -207,3 +218,23 @@ def run_end_to_end_closed_loop(payload: CreateEvaluationPayload) -> Dict[str, An
     loop = ReliabilityEvaluationLoop(run_manager=default_run_manager)
     eval_res = loop.run_full_evaluation(req)
     return eval_res.to_dict(include_telemetry=True)
+
+
+@router.post("/investigations")
+def run_autonomous_investigation(payload: InvestigationPayload) -> Dict[str, Any]:
+    """Let System 2 choose and execute bounded System 1 experiments."""
+    if not get_scenario(payload.scenario_id):
+        raise HTTPException(status_code=404, detail=f"Scenario '{payload.scenario_id}' not found.")
+
+    investigator = AutonomousInvestigator(
+        InvestigatorConfig(
+            objective=payload.objective,
+            hardware_preset_id=payload.hardware_preset_id,
+            scenario_id=payload.scenario_id,
+            controller_code=payload.controller_code,
+            seed=payload.seed,
+            budget=payload.budget,
+            max_boundary_steps=payload.max_boundary_steps,
+        )
+    )
+    return investigator.run().to_dict()
