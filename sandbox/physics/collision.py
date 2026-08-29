@@ -32,9 +32,8 @@ class CollisionDetector:
         """
         result = CollisionResult()
 
-        # 1. Evaluate clearance and collision against boundary walls
         for idx, wall in enumerate(world_map.boundary_walls):
-            wall_dist = vehicle_poly.min_distance_to_segment(wall)
+            wall_dist: float = vehicle_poly.min_distance_to_segment(wall)
             if wall_dist <= 1e-4:
                 result.is_collision = True
                 result.collided_entity_id = f"boundary_wall_{idx}"

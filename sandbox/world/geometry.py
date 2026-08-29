@@ -93,6 +93,24 @@ class Segment2D:
             return t1
         return None
 
+    def intersects_segment(self, other: Segment2D) -> bool:
+        """Determines whether two 2D line segments intersect."""
+        p = self.p1
+        r = self.p2 - self.p1
+        q = other.p1
+        s = other.p2 - other.p1
+        r_cross_s = r.cross(s)
+        q_minus_p = q - p
+        if abs(r_cross_s) < 1e-9:
+            if abs(q_minus_p.cross(r)) < 1e-9 and r.magnitude_sq > 0:
+                t0 = q_minus_p.dot(r) / r.magnitude_sq
+                t1 = t0 + s.dot(r) / r.magnitude_sq
+                return max(min(t0, t1), 0.0) <= min(max(t0, t1), 1.0)
+            return False
+        t = q_minus_p.cross(s) / r_cross_s
+        u = q_minus_p.cross(r) / r_cross_s
+        return 0.0 <= t <= 1.0 and 0.0 <= u <= 1.0
+
 
 @dataclass
 class Polygon2D:
@@ -174,12 +192,31 @@ class Polygon2D:
                 min_d = d
         return min_d
 
+    def contains_point(self, point: Vec2D) -> bool:
+        """Check if a point lies inside or on the boundary of this convex polygon."""
+        edges = self.get_edges()
+        if not edges:
+            return False
+        signs: list[bool] = []
+        for edge in edges:
+            v = edge.p2 - edge.p1
+            vp = point - edge.p1
+            cross = v.cross(vp)
+            if abs(cross) > 1e-9:
+                signs.append(cross > 0)
+        return len(set(signs)) <= 1
+
     def min_distance_to_segment(self, segment: Segment2D) -> float:
         """Calculate minimum Euclidean distance from any vertex/edge of this polygon to a segment."""
-        # 1. Distance from polygon vertices to segment
-        min_d = float("inf")
-        ab = segment.p2 - segment.p1
-        ab_len_sq = ab.magnitude_sq
+        for edge in self.get_edges():
+            if edge.intersects_segment(segment):
+                return 0.0
+        if self.contains_point(segment.p1) or self.contains_point(segment.p2):
+            return 0.0
+
+        min_d: float = float("inf")
+        ab: Vec2D = segment.p2 - segment.p1
+        ab_len_sq: float = ab.magnitude_sq
         for v in self.vertices:
             ap = v - segment.p1
             t = 0.0 if ab_len_sq == 0 else max(0.0, min(1.0, ap.dot(ab) / ab_len_sq))
@@ -188,7 +225,6 @@ class Polygon2D:
             if d < min_d:
                 min_d = d
 
-        # 2. Distance from segment endpoints to polygon edges
         for pt in (segment.p1, segment.p2):
             d = self.min_distance_to_point(pt)
             if d < min_d:

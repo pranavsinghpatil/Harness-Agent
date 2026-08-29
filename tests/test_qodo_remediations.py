@@ -14,7 +14,7 @@ from sandbox.core.rng import RngManager
 
 def test_footprint_clearance_and_boundary_walls() -> None:
     """Verifies that clearance accounts for vehicle footprint and walls rather than only centroid."""
-    world = WorldMap(width=50.0, height=50.0)
+    world: WorldMap = WorldMap(width=50.0, height=50.0)
     # Vehicle near west boundary wall (x=0)
     # Vehicle box: center=(1.5, 25.0), width=1.0, length=2.0 (half-length = 1.0)
     # Minimum distance from vehicle edge (x=0.5) to wall (x=0) should be 0.5m, not 1.5m
@@ -24,6 +24,18 @@ def test_footprint_clearance_and_boundary_walls() -> None:
     assert not res.is_collision
     assert abs(res.min_clearance - 0.5) < 1e-4
     assert res.closest_entity_id == "boundary_wall_3"  # West wall
+
+
+def test_crossing_wall_collision_detected() -> None:
+    """Verifies that a wall bisecting/crossing the vehicle polygon returns 0 distance and collision."""
+    world: WorldMap = WorldMap(width=50.0, height=50.0)
+    # Vehicle centered at (0.0, 25.0), straddling the West boundary wall at x=0
+    v_poly = Polygon2D.from_box(center=Vec2D(0.0, 25.0), width=2.0, length=4.0, heading=0.0)
+    res = CollisionDetector.evaluate(v_poly, world)
+
+    assert res.is_collision
+    assert res.min_clearance == 0.0
+    assert res.collided_entity_id == "boundary_wall_3"
 
 
 def test_scenario_seed_override_isolation() -> None:
@@ -73,7 +85,6 @@ def test_transport_bus_baseline_recovery() -> None:
     ch.jitter_std_s = 0.050
     ch.packet_loss_rate = 0.8
 
-    # Reset
     bus.reset()
     assert ch.base_latency_s == 0.015
     assert ch.jitter_std_s == 0.002
