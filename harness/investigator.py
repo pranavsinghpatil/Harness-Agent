@@ -12,6 +12,7 @@ from harness.models.evaluation import (
     HarnessRun,
     HarnessRunStatus,
 )
+from harness.hypotheses import FalsificationPlan, HypothesisEngine
 from harness.orchestration.run_manager import RunManager, default_run_manager
 from harness.planning import (
     ExperimentCandidate,
@@ -20,6 +21,7 @@ from harness.planning import (
     PlannerDimension,
 )
 from sandbox.experiments import PerturbationSpace, default_perturbation_space
+from sandbox.telemetry.evidence import EvidenceSnapshot, build_evidence_snapshot
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,7 @@ class InvestigationRun:
     candidate: ExperimentCandidate
     evaluation_id: str
     outcome: ExperimentOutcome
+    evidence: Optional[EvidenceSnapshot] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize one investigation step for REST, MCP, and audit logs."""
@@ -58,6 +61,7 @@ class InvestigationRun:
             "evaluation_id": self.evaluation_id,
             "experiment": self.candidate.to_dict(),
             "outcome": self.outcome.to_dict(),
+            "evidence": self.evidence.to_dict() if self.evidence else None,
         }
 
 
@@ -89,6 +93,8 @@ class AutonomousInvestigator:
             max_boundary_steps=config.max_boundary_steps,
         )
         self._runs: list[InvestigationRun] = []
+        self.hypothesis_engine = HypothesisEngine()
+        self._falsification_plans: list[FalsificationPlan] = []
         self._last_run_limit: Optional[int] = None
         self._last_run_was_caller_limited: bool = False
 
@@ -118,6 +124,7 @@ class AutonomousInvestigator:
     def _execute_candidate(self, candidate: ExperimentCandidate) -> InvestigationRun:
         """Compile and execute one candidate while preserving structured failures."""
         evaluation_id = ""
+        run: Optional[HarnessRun] = None
         try:
             overrides = self.config.perturbation_space.build_fault_overrides(
                 values=dict(candidate.values),
@@ -149,14 +156,33 @@ class AutonomousInvestigator:
                 },
             )
 
-        self.planner.observe(candidate.experiment_id, outcome)
+        record = self.planner.observe(candidate.experiment_id, outcome)
+        self.hypothesis_engine.observe(record, self.planner.dimensions)
+        if not outcome.passed:
+            plan = self.hypothesis_engine.propose_falsification(record, self.planner.dimensions)
+            if plan is not None:
+                self._falsification_plans.append(plan)
+        evidence = self._build_evidence(run)
         result = InvestigationRun(
             candidate=candidate,
             evaluation_id=evaluation_id,
             outcome=outcome,
+            evidence=evidence,
         )
         self._runs.append(result)
         return result
+
+    @staticmethod
+    def _build_evidence(run: Optional[HarnessRun]) -> Optional[EvidenceSnapshot]:
+        """Build provenance evidence when System 1 returned a concrete run."""
+        if run is None:
+            return None
+        return build_evidence_snapshot(
+            run_id=run.run_id,
+            trace_hash=run.trace_hash,
+            frames=run.telemetry_frames,
+            events=[event.to_dict() for event in run.events],
+        )
 
     def run(self, max_experiments: Optional[int] = None) -> AutonomousInvestigator:
         """Execute candidates until the configured budget or optional lower limit.
@@ -223,4 +249,6 @@ class AutonomousInvestigator:
             "runs": [run.to_dict() for run in self._runs],
             "planner": planner_status,
             "evidence": planner_status["summary"],
+            "hypotheses": self.hypothesis_engine.to_dict(),
+            "falsification_plans": [plan.to_dict() for plan in self._falsification_plans],
         }
