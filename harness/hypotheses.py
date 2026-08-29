@@ -146,7 +146,7 @@ class HypothesisEngine:
         variables: tuple[str, ...] = self._changed_variables(record, dimensions)
         if not variables or record.candidate.phase == ExperimentPhase.BASELINE:
             return self.hypotheses
-        key_variables: tuple[str, ...] = variables if not record.outcome.passed else variables[:1]
+        key_variables: tuple[str, ...] = variables
         hypothesis_id: str = "H-" + "+".join(_slug(value) for value in key_variables)
         hypothesis: Optional[Hypothesis] = self._hypotheses.get(hypothesis_id)
         if hypothesis is None:
