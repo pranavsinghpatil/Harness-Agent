@@ -65,9 +65,15 @@ class VirtualEdgeScheduler:
             self.profile.is_throttled = False
             self.profile.effective_cpu_ratio = 1.0
 
-    def _process_task_queue(self, sim_time: float, dt: float) -> tuple[list[ComputeTask], float]:
+    def _process_task_queue(self, sim_time: float, dt: float) -> tuple[list[ComputeTask], float, float]:
         """Executes queued compute tasks given available CPU capacity in time slice dt."""
-        available_compute: float = self.profile.cpu_capacity_units_per_sec * self.profile.effective_cpu_ratio * dt
+        nominal_compute: float = (
+            self.profile.cpu_capacity_units_per_sec
+            * self.profile.effective_cpu_ratio
+            * dt
+        )
+        available_compute: float = nominal_compute * self.profile.cpu_availability_ratio
+        consumed_compute: float = 0.0
         just_completed: list[ComputeTask] = []
 
         while self.task_queue and available_compute > 0:
@@ -76,6 +82,7 @@ class VirtualEdgeScheduler:
 
             if available_compute >= needed:
                 available_compute -= needed
+                consumed_compute += needed
                 current_task.progress_units = current_task.compute_cost_units
                 current_task.is_completed = True
                 self.task_queue.pop(0)
@@ -99,9 +106,10 @@ class VirtualEdgeScheduler:
                 self.metrics.total_completed_tasks += 1
             else:
                 current_task.progress_units += available_compute
+                consumed_compute += available_compute
                 available_compute = 0.0
 
-        return just_completed, available_compute
+        return just_completed, available_compute, consumed_compute
 
     def _audit_remaining_deadlines(self, sim_time: float) -> None:
         """Checks if any remaining in-queue tasks have exceeded their deadline timestamp."""
@@ -119,14 +127,13 @@ class VirtualEdgeScheduler:
                     }
                 )
 
-    def _update_metrics(self, available_compute: float, dt: float) -> None:
+    def _update_metrics(self, consumed_compute: float, dt: float) -> None:
         """Updates internal telemetry metrics for queue depth, utilization, and temperature."""
         self.metrics.queue_depth = len(self.task_queue)
         self.metrics.temperature_celsius = round(self.profile.current_temperature, 1)
         self.metrics.is_throttled = self.profile.is_throttled
-        self.metrics.cpu_utilization = round(
-            1.0 - (available_compute / max(1e-5, self.profile.cpu_capacity_units_per_sec * dt)), 2
-        )
+        nominal_compute: float = self.profile.cpu_capacity_units_per_sec * self.profile.effective_cpu_ratio * dt
+        self.metrics.cpu_utilization = round(consumed_compute / max(1e-5, nominal_compute), 2)
 
     def step(self, sim_time: float, dt: float) -> list[ComputeTask]:
         """Processes scheduled compute tasks for a timestep dt and updates hardware thermal state.
@@ -142,9 +149,9 @@ class VirtualEdgeScheduler:
             return []
 
         self._update_thermal_state(dt)
-        just_completed, remaining_compute = self._process_task_queue(sim_time, dt)
+        just_completed, _remaining_compute, consumed_compute = self._process_task_queue(sim_time, dt)
         self._audit_remaining_deadlines(sim_time)
-        self._update_metrics(remaining_compute, dt)
+        self._update_metrics(consumed_compute, dt)
 
         return just_completed
 
@@ -156,4 +163,5 @@ class VirtualEdgeScheduler:
         self.profile.current_temperature = self.profile.thermal_ambient_temp
         self.profile.is_throttled = False
         self.profile.effective_cpu_ratio = 1.0
+        self.profile.cpu_availability_ratio = 1.0
         self.metrics = HardwareMetrics()

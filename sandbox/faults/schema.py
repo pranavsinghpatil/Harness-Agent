@@ -5,6 +5,32 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+SUPPORTED_FAULT_PARAMETERS: dict[tuple[str, str], frozenset[str]] = {
+    ("sensor.lidar", "noise_burst"): frozenset({"scale"}),
+    ("sensor.lidar", "bias_offset"): frozenset({"offset"}),
+    ("sensor.lidar", "phantom_returns"): frozenset({"rate"}),
+    ("sensor.camera", "frame_drop"): frozenset({"rate"}),
+    ("sensor.camera", "confidence_degradation"): frozenset({"degradation"}),
+    ("transport.camera", "added_latency"): frozenset({"latency_ms"}),
+    ("transport.camera", "packet_loss"): frozenset({"loss_rate"}),
+    ("transport.camera", "jitter"): frozenset({"jitter_ms"}),
+    ("hardware.compute", "overload"): frozenset({"compute_units"}),
+    ("hardware.compute", "thermal_spike"): frozenset({"temp_increase"}),
+    ("hardware.compute", "cpu_availability"): frozenset({"factor"}),
+    ("actuator.brake", "reduced_effectiveness"): frozenset({"factor"}),
+    ("actuator.brake", "extra_delay"): frozenset({"delay_ms"}),
+    ("actuator.brake", "dropped_command"): frozenset({"drop_prob"}),
+    ("actuator.steering", "stuck_value"): frozenset({"angle_rad"}),
+    ("actuator.steering", "extra_delay"): frozenset({"delay_ms"}),
+    ("actuator.throttle", "reduced_effectiveness"): frozenset({"factor"}),
+}
+
+
+def is_supported_fault_parameter(target: str, fault_type: str, parameter_name: str) -> bool:
+    """Return whether a single-parameter perturbation is supported at runtime."""
+    return parameter_name in SUPPORTED_FAULT_PARAMETERS.get((target, fault_type), frozenset())
+
+
 class FaultDefinition(BaseModel):
     """Declarative specification of a reproducible system perturbation."""
     id: str = Field(..., description="Unique identifier for the fault")
