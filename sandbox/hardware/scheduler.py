@@ -73,6 +73,7 @@ class VirtualEdgeScheduler:
             * dt
         )
         available_compute: float = nominal_compute * self.profile.cpu_availability_ratio
+        consumed_compute: float = 0.0
         just_completed: list[ComputeTask] = []
 
         while self.task_queue and available_compute > 0:
@@ -81,6 +82,7 @@ class VirtualEdgeScheduler:
 
             if available_compute >= needed:
                 available_compute -= needed
+                consumed_compute += needed
                 current_task.progress_units = current_task.compute_cost_units
                 current_task.is_completed = True
                 self.task_queue.pop(0)
@@ -104,9 +106,9 @@ class VirtualEdgeScheduler:
                 self.metrics.total_completed_tasks += 1
             else:
                 current_task.progress_units += available_compute
+                consumed_compute += available_compute
                 available_compute = 0.0
 
-        consumed_compute: float = nominal_compute - available_compute
         return just_completed, available_compute, consumed_compute
 
     def _audit_remaining_deadlines(self, sim_time: float) -> None:
