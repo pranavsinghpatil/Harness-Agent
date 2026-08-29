@@ -72,6 +72,28 @@ def test_dimension_rejects_unknown_runtime_fault_parameter() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("target", "fault_type", "parameter_name"),
+    [
+        ("sensor.lidar", "sector_loss", "min_angle_rad"),
+        ("sensor.position", "position_jump", "offset_x"),
+    ],
+)
+def test_dimension_rejects_coupled_faults_without_atomic_parameters(
+    target: str, fault_type: str, parameter_name: str
+) -> None:
+    with pytest.raises(ValueError, match="Unsupported fault parameter"):
+        PerturbationDimension(
+            id="coupled_fault",
+            target=target,
+            fault_type=fault_type,
+            parameter_name=parameter_name,
+            minimum=0.0,
+            maximum=1.0,
+            baseline=0.0,
+        )
+
+
 @pytest.mark.parametrize("bad_value", [float("inf"), float("-inf"), float("nan")])
 def test_dimension_rejects_non_finite_bounds_and_values(bad_value: float) -> None:
     with pytest.raises(ValueError, match="finite"):

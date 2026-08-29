@@ -130,7 +130,7 @@ class VirtualEdgeScheduler:
         self.metrics.queue_depth = len(self.task_queue)
         self.metrics.temperature_celsius = round(self.profile.current_temperature, 1)
         self.metrics.is_throttled = self.profile.is_throttled
-        nominal_compute = self.profile.cpu_capacity_units_per_sec * self.profile.effective_cpu_ratio * dt
+        nominal_compute: float = self.profile.cpu_capacity_units_per_sec * self.profile.effective_cpu_ratio * dt
         self.metrics.cpu_utilization = round(consumed_compute / max(1e-5, nominal_compute), 2)
 
     def step(self, sim_time: float, dt: float) -> list[ComputeTask]:
