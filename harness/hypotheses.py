@@ -93,10 +93,10 @@ class HypothesisEngine:
 
     def _make_hypothesis(self, variables: tuple[str, ...]) -> Hypothesis:
         """Create a neutral hypothesis for a variable or interaction."""
-        key = "+".join(_slug(variable) for variable in variables)
-        subject = " and ".join(variables)
-        interaction = len(variables) > 1
-        statement = (
+        key: str = "+".join(_slug(variable) for variable in variables)
+        subject: str = " and ".join(variables)
+        interaction: bool = len(variables) > 1
+        statement: str = (
             f"Failure emerges from the interaction between {subject}."
             if interaction
             else f"Failure is caused by degradation in {subject}."
@@ -110,11 +110,11 @@ class HypothesisEngine:
 
     def _update_hypothesis(self, hypothesis: Hypothesis, record: EvidenceRecord, supports: bool) -> Hypothesis:
         """Apply one supporting or contradicting observation and recalculate confidence."""
-        supporting = (*hypothesis.supporting_experiment_ids, record.candidate.experiment_id) if supports else hypothesis.supporting_experiment_ids
-        contradicting = hypothesis.contradicting_experiment_ids if supports else (*hypothesis.contradicting_experiment_ids, record.candidate.experiment_id)
-        total = len(supporting) + len(contradicting)
-        confidence = 0.5 + (0.5 * (len(supporting) - len(contradicting)) / total) if total else 0.5
-        status = HypothesisStatus.SUPPORTED if confidence >= 0.6 else HypothesisStatus.REFUTED if confidence <= 0.4 else HypothesisStatus.ACTIVE
+        supporting: tuple[str, ...] = (*hypothesis.supporting_experiment_ids, record.candidate.experiment_id) if supports else hypothesis.supporting_experiment_ids
+        contradicting: tuple[str, ...] = hypothesis.contradicting_experiment_ids if supports else (*hypothesis.contradicting_experiment_ids, record.candidate.experiment_id)
+        total: int = len(supporting) + len(contradicting)
+        confidence: float = 0.5 + (0.5 * (len(supporting) - len(contradicting)) / total) if total else 0.5
+        status: HypothesisStatus = HypothesisStatus.SUPPORTED if confidence >= 0.6 else HypothesisStatus.REFUTED if confidence <= 0.4 else HypothesisStatus.ACTIVE
         return Hypothesis(
             hypothesis_id=hypothesis.hypothesis_id,
             statement=hypothesis.statement,
@@ -139,16 +139,19 @@ class HypothesisEngine:
         Raises:
             ValueError: If the same experiment is observed twice.
         """
-        experiment_id = record.candidate.experiment_id
+        experiment_id: str = record.candidate.experiment_id
         if experiment_id in self._observed:
             raise ValueError(f"Experiment '{experiment_id}' already observed")
         self._observed.add(experiment_id)
-        variables = self._changed_variables(record, dimensions)
+        variables: tuple[str, ...] = self._changed_variables(record, dimensions)
         if not variables or record.candidate.phase == ExperimentPhase.BASELINE:
             return self.hypotheses
-        key_variables = variables if not record.outcome.passed else variables[:1]
-        hypothesis = self._hypotheses.get("H-" + "+".join(_slug(value) for value in key_variables))
+        key_variables: tuple[str, ...] = variables if not record.outcome.passed else variables[:1]
+        hypothesis_id: str = "H-" + "+".join(_slug(value) for value in key_variables)
+        hypothesis: Optional[Hypothesis] = self._hypotheses.get(hypothesis_id)
         if hypothesis is None:
+            if record.outcome.passed:
+                return self.hypotheses
             hypothesis = self._make_hypothesis(key_variables)
         self._hypotheses[hypothesis.hypothesis_id] = self._update_hypothesis(hypothesis, record, not record.outcome.passed)
         return self.hypotheses
@@ -160,16 +163,31 @@ class HypothesisEngine:
     def propose_falsification(
         self, record: EvidenceRecord, dimensions: tuple[PlannerDimension, ...]
     ) -> Optional[FalsificationPlan]:
-        """Propose restoring one variable while preserving the observed failure context."""
+        """Propose a counterfactual that tests a failed explanation.
+
+        Args:
+            record: Completed experiment whose values and failed outcome form the
+                observed causal context.
+            dimensions: Planner dimensions defining valid baseline values and IDs.
+
+        Returns:
+            A FalsificationPlan restoring the first changed variable while keeping
+            every other observed value, or ``None`` for safe/baseline evidence.
+
+        Raises:
+            StopIteration: If the record references a changed variable absent from
+                ``dimensions``.
+        """
         if record.outcome.passed:
             return None
-        changed = self._changed_variables(record, dimensions)
+        changed: tuple[str, ...] = self._changed_variables(record, dimensions)
         if not changed:
             return None
-        variable = changed[0]
-        hypothesis_id = "H-" + _slug(variable)
-        values = dict(record.candidate.values)
-        values[variable] = next(d.baseline for d in dimensions if d.id == variable)
+        variable: str = changed[0]
+        hypothesis_id: str = "H-" + "+".join(_slug(value) for value in changed)
+        values: dict[str, float] = dict(record.candidate.values)
+        baseline: float = next(d.baseline for d in dimensions if d.id == variable)
+        values[variable] = baseline
         return FalsificationPlan(
             hypothesis_id=hypothesis_id,
             values=values,
