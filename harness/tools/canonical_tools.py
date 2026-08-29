@@ -28,8 +28,13 @@ def inspect_scenario(scenario_id: str) -> Dict[str, Any]:
 
     Returns:
         Dictionary detailing world dimensions, initial state, goal, and faults.
+
+    Raises:
+        ValueError: If scenario_id is not found in the scenario registry.
     """
     sc = get_scenario(scenario_id)
+    if not sc:
+        raise ValueError(f"Scenario '{scenario_id}' not found.")
     return sc.model_dump()
 
 
@@ -67,7 +72,14 @@ def create_experiment(
 
     Returns:
         Created evaluation experiment metadata dictionary.
+
+    Raises:
+        ValueError: If scenario_id is not found.
     """
+    sc = get_scenario(scenario_id)
+    if not sc:
+        raise ValueError(f"Scenario '{scenario_id}' not found.")
+
     req = EvaluationRequest(
         hardware_preset_id=hardware_preset_id,
         scenario_id=scenario_id,
@@ -87,6 +99,9 @@ def run_experiment(evaluation_id: str) -> Dict[str, Any]:
 
     Returns:
         Dictionary containing run status, violations, and trace hash.
+
+    Raises:
+        KeyError: If evaluation_id is not found.
     """
     run_res = default_run_manager.execute_baseline(evaluation_id)
     return run_res.to_dict()
@@ -100,6 +115,9 @@ def diagnose_failure(evaluation_id: str) -> Dict[str, Any]:
 
     Returns:
         Causal diagnostic report with root causes, causal graph, and patch recommendations.
+
+    Raises:
+        KeyError: If evaluation_id or baseline run is not found.
     """
     eval_obj = default_run_manager.get_evaluation(evaluation_id)
     if not eval_obj or not eval_obj.baseline_run:
@@ -148,6 +166,9 @@ def verify_patch(evaluation_id: str, patched_code: str) -> Dict[str, Any]:
 
     Returns:
         Dictionary containing verification run metrics and comparison verdict.
+
+    Raises:
+        KeyError: If evaluation_id is not found.
     """
     verify_run = default_run_manager.execute_verification(
         evaluation_id=evaluation_id, patched_code=patched_code

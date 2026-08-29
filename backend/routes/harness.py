@@ -8,9 +8,11 @@ from fastapi import APIRouter, HTTPException
 from harness.hardware.registry import default_hardware_registry
 from harness.orchestration.run_manager import default_run_manager
 from harness.models.evaluation import EvaluationRequest, EvaluationMode
+from harness.models.patch import PatchStrategyType
 from harness.evaluator.loop import ReliabilityEvaluationLoop
 from harness.diagnostics.analyzer import CausalTelemetryAnalyzer
 from harness.patcher.engine import AutoCodePatcher
+from sandbox.api.tools import get_scenario
 
 router = APIRouter(prefix="/api/harness", tags=["harness"])
 
@@ -51,7 +53,14 @@ def create_and_run_evaluation(payload: CreateEvaluationPayload) -> Dict[str, Any
 
     Returns:
         Dictionary representing the created HarnessEvaluation state.
+
+    Raises:
+        HTTPException: 404 if scenario_id is not found.
     """
+    sc = get_scenario(payload.scenario_id)
+    if not sc:
+        raise HTTPException(status_code=404, detail=f"Scenario '{payload.scenario_id}' not found.")
+
     req = EvaluationRequest(
         hardware_preset_id=payload.hardware_preset_id,
         scenario_id=payload.scenario_id,
@@ -126,8 +135,17 @@ def generate_controller_patch(
     if not eval_obj:
         raise HTTPException(status_code=404, detail=f"Evaluation '{evaluation_id}' not found.")
 
+    strategy_override = None
+    if payload.strategy:
+        try:
+            strategy_override = PatchStrategyType(payload.strategy)
+        except ValueError:
+            pass
+
     patch_res = AutoCodePatcher.generate_patch(
-        original_code=payload.original_code, diagnostic_report=eval_obj.diagnosis
+        original_code=payload.original_code,
+        diagnostic_report=eval_obj.diagnosis,
+        strategy_override=strategy_override,
     )
     eval_obj.patch = patch_res
     return patch_res.to_dict()
@@ -171,12 +189,20 @@ def run_end_to_end_closed_loop(payload: CreateEvaluationPayload) -> Dict[str, An
 
     Returns:
         Complete HarnessEvaluation dictionary with baseline, diagnosis, patch, and verification proof.
+
+    Raises:
+        HTTPException: 404 if scenario is not found.
     """
+    sc = get_scenario(payload.scenario_id)
+    if not sc:
+        raise HTTPException(status_code=404, detail=f"Scenario '{payload.scenario_id}' not found.")
+
     req = EvaluationRequest(
         hardware_preset_id=payload.hardware_preset_id,
         scenario_id=payload.scenario_id,
         controller_code=payload.controller_code,
         seed=payload.seed,
+        mode=EvaluationMode(payload.mode) if payload.mode in EvaluationMode.__members__ else EvaluationMode.AUTONOMOUS_HARNESS,
     )
     loop = ReliabilityEvaluationLoop(run_manager=default_run_manager)
     eval_res = loop.run_full_evaluation(req)
