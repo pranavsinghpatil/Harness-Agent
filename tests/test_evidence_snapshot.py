@@ -1,4 +1,4 @@
-from sandbox.telemetry.evidence import build_evidence_snapshot
+from sandbox.telemetry.evidence import EvidenceSignal, EvidenceSnapshot, build_evidence_snapshot
 from sandbox.telemetry.recorder import TelemetryFrame
 
 
@@ -22,7 +22,7 @@ def _frame(step: int, sim_time: float, clearance: float) -> TelemetryFrame:
 
 
 def test_snapshot_preserves_signal_provenance_and_event_order() -> None:
-    snapshot = build_evidence_snapshot(
+    snapshot: EvidenceSnapshot = build_evidence_snapshot(
         "run_1",
         "trace_1",
         [_frame(4, 0.04, 1.2), _frame(5, 0.05, 0.7)],
@@ -32,7 +32,7 @@ def test_snapshot_preserves_signal_provenance_and_event_order() -> None:
         ],
     )
 
-    clearance = snapshot.signals_named("min_clearance")
+    clearance: tuple[EvidenceSignal, ...] = snapshot.signals_named("min_clearance")
     assert [signal.frame_index for signal in clearance] == [0, 1]
     assert clearance[1].sim_time == 0.05
     assert [link.event_type for link in snapshot.event_links] == ["FAULT_INJECTED", "INVARIANT_BREACHED"]
@@ -46,3 +46,37 @@ def test_snapshot_rejects_invalid_event_time() -> None:
         assert str(exc) == "event sim_time must be numeric"
     else:
         raise AssertionError("invalid event time should be rejected")
+
+    for invalid_time in ("nan", float("inf")):
+        try:
+            build_evidence_snapshot("run_1", "trace_1", [], [{"sim_time": invalid_time}])
+        except ValueError as exc:
+            assert "finite" in str(exc)
+        else:
+            raise AssertionError("non-finite event time should be rejected")
+
+
+def test_snapshot_omits_missing_or_nonfinite_measurements() -> None:
+    frame: TelemetryFrame = _frame(1, 0.01, float("inf"))
+    frame.hardware_metrics = {"cpu_utilization": float("nan")}
+    snapshot: EvidenceSnapshot = build_evidence_snapshot("run_1", "trace_1", [frame])
+
+    assert snapshot.signals_named("min_clearance") == ()
+    assert snapshot.signals_named("hardware.cpu_utilization") == ()
+    assert snapshot.signals_named("hardware.temperature") == ()
+
+
+def test_snapshot_freezes_nested_event_payload() -> None:
+    payload: dict[str, object] = {"details": {"faults": ["camera"]}}
+    snapshot: EvidenceSnapshot = build_evidence_snapshot(
+        "run_1", "trace_1", [], [{"type": "FAULT", "sim_time": 0.1, "payload": payload}]
+    )
+    payload["details"] = {"faults": ["changed"]}
+
+    assert snapshot.event_links[0].to_dict()["payload"] == {"details": {"faults": ["camera"]}}
+    try:
+        snapshot.event_links[0].payload["new"] = True  # type: ignore[index]
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("event payload should be immutable")
