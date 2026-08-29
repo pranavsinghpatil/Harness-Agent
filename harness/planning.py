@@ -15,7 +15,7 @@ from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
 
-def _freeze_value(value: Any) -> Any:
+def _freeze_value(value: object) -> object:
     """Recursively convert mutable containers into immutable snapshots."""
     if isinstance(value, Mapping):
         return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
@@ -28,14 +28,14 @@ def _freeze_value(value: Any) -> Any:
     return deepcopy(value)
 
 
-def _thaw_value(value: Any) -> Any:
+def _thaw_value(value: object) -> object:
     """Convert immutable evidence containers back to JSON-compatible values."""
     if isinstance(value, Mapping):
         return {key: _thaw_value(item) for key, item in value.items()}
     if isinstance(value, tuple):
         return [_thaw_value(item) for item in value]
     if isinstance(value, frozenset):
-        return sorted(_thaw_value(item) for item in value)
+        return sorted((_thaw_value(item) for item in value), key=repr)
     return deepcopy(value)
 
 
@@ -151,7 +151,18 @@ class EvidenceLedger:
         return tuple(self._records)
 
     def append(self, candidate: ExperimentCandidate, outcome: ExperimentOutcome) -> EvidenceRecord:
-        """Record one completed experiment exactly once."""
+        """Record one completed experiment exactly once.
+
+        Args:
+            candidate: Planned experiment whose immutable values identify the run.
+            outcome: Observed System 1 result and its immutable diagnostic details.
+
+        Returns:
+            The defensive ``EvidenceRecord`` snapshot stored by the ledger.
+
+        Raises:
+            ValueError: If evidence for the candidate's experiment ID already exists.
+        """
         if candidate.experiment_id in self._experiment_ids:
             raise ValueError(f"Experiment '{candidate.experiment_id}' already has evidence")
         candidate_snapshot: ExperimentCandidate = ExperimentCandidate(
@@ -168,7 +179,7 @@ class EvidenceLedger:
             trace_hash=outcome.trace_hash,
             details=_thaw_value(outcome.details),
         )
-        record = EvidenceRecord(candidate=candidate_snapshot, outcome=outcome_snapshot)
+        record: EvidenceRecord = EvidenceRecord(candidate=candidate_snapshot, outcome=outcome_snapshot)
         self._records.append(record)
         self._experiment_ids.add(candidate.experiment_id)
         return record

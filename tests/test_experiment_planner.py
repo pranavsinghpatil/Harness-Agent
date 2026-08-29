@@ -6,6 +6,7 @@ import pytest
 
 from harness.planning import (
     ExperimentCandidate,
+    EvidenceRecord,
     ExperimentOutcome,
     ExperimentPhase,
     ExperimentPlanner,
@@ -112,10 +113,23 @@ def test_ledger_snapshots_nested_candidate_and_outcome_mappings() -> None:
     )
     outcome: ExperimentOutcome = ExperimentOutcome(passed=True, details=details)
 
-    record = planner.ledger.append(candidate, outcome)
+    record: EvidenceRecord = planner.ledger.append(candidate, outcome)
     values["camera_latency"] = 99.0
     details["telemetry"]["sample"] = 99
 
     assert record.candidate.values["camera_latency"] == 42.0
     assert record.outcome.details["telemetry"]["sample"] == 1
     assert record.outcome.to_dict()["details"] == {"telemetry": {"sample": 1}}
+
+    mixed_details: dict[str, object] = {"mixed": {1, "x"}}
+    mixed_outcome: ExperimentOutcome = ExperimentOutcome(passed=True, details=mixed_details)
+    mixed_record: EvidenceRecord = planner.ledger.append(
+        ExperimentCandidate(
+            experiment_id="exp_mixed",
+            values={"camera_latency": 0.0},
+            phase=ExperimentPhase.SCREEN,
+            rationale="mixed set serialization",
+        ),
+        mixed_outcome,
+    )
+    assert set(mixed_record.outcome.to_dict()["details"]["mixed"]) == {1, "x"}
