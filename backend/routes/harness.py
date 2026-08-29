@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from fastapi import APIRouter, HTTPException
 
 from harness.hardware.registry import default_hardware_registry
@@ -43,6 +43,15 @@ class InvestigationPayload(BaseModel):
     seed: int = Field(default=1337, description="Random seed for repeatable experiments")
     budget: int = Field(default=12, ge=1, le=100, description="Maximum number of experiments")
     max_boundary_steps: int = Field(default=3, ge=0, le=10, description="Maximum binary refinements per failed dimension")
+
+    @field_validator("objective")
+    @classmethod
+    def validate_objective(cls, value: str) -> str:
+        """Reject blank objectives as a client validation error."""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("objective must not be blank")
+        return normalized
 
 
 @router.get("/hardware-presets")

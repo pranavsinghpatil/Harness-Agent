@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from harness.investigator import AutonomousInvestigator, InvestigatorConfig
-from harness.models.evaluation import HarnessRun, HarnessRunStatus
+from harness.models.evaluation import ControllerHealth, HarnessRun, HarnessRunStatus
 from mcp_server.server import MCPServerHandler
 
 
@@ -29,6 +29,7 @@ class FakeRunManager:
             run_id=f"fake_run_{evaluation_id}",
             status=HarnessRunStatus.SAFETY_VIOLATION if failed else HarnessRunStatus.COMPLETED,
             trace_hash=f"trace_{evaluation_id}",
+            task_completed=not failed,
             violations=[object()] if failed else [],
             metrics={"min_clearance": 0.0 if failed else 2.0},
         )
@@ -66,6 +67,19 @@ def test_investigator_limits_a_short_run_without_spending_remaining_budget() -> 
     assert len(result["runs"]) == 1
     assert result["runs"][0]["experiment"]["phase"] == "BASELINE"
     assert result["planner"]["budget"] == 10
+    assert result["status"] == "PARTIAL"
+
+
+def test_incomplete_completed_run_is_not_passing_evidence() -> None:
+    run: HarnessRun = HarnessRun(
+        status=HarnessRunStatus.COMPLETED,
+        controller_health=ControllerHealth.HEALTHY,
+        task_completed=False,
+    )
+
+    outcome = AutonomousInvestigator._to_outcome(run)
+
+    assert outcome.passed is False
 
 
 def test_mcp_manifest_exposes_autonomous_investigation() -> None:

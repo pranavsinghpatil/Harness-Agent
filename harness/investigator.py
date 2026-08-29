@@ -89,6 +89,7 @@ class AutonomousInvestigator:
             max_boundary_steps=config.max_boundary_steps,
         )
         self._runs: list[InvestigationRun] = []
+        self._last_run_limit: Optional[int] = None
 
     @staticmethod
     def _to_outcome(run: HarnessRun) -> ExperimentOutcome:
@@ -96,6 +97,7 @@ class AutonomousInvestigator:
         passed = (
             run.status == HarnessRunStatus.COMPLETED
             and run.controller_health == ControllerHealth.HEALTHY
+            and run.task_completed
             and not run.violations
         )
         return ExperimentOutcome(
@@ -157,6 +159,7 @@ class AutonomousInvestigator:
 
     def run(self, max_experiments: Optional[int] = None) -> AutonomousInvestigator:
         """Execute candidates until the configured budget or optional limit."""
+        self._last_run_limit = max_experiments
         limit = self.config.budget
         if max_experiments is not None:
             if max_experiments < 1:
@@ -174,7 +177,14 @@ class AutonomousInvestigator:
         """Serialize the complete investigation, including explicit unknowns."""
         planner_status = self.planner.status()
         records = self.planner.ledger.records
-        if self.planner.planned_count >= self.config.budget:
+        caller_limited = (
+            self._last_run_limit is not None
+            and self._last_run_limit < self.config.budget
+            and self.planner.planned_count >= self._last_run_limit
+        )
+        if caller_limited:
+            status = "PARTIAL"
+        elif self.planner.planned_count >= self.config.budget:
             status = "BUDGET_EXHAUSTED"
         elif len(records) < self.planner.planned_count:
             status = "IN_PROGRESS"
@@ -188,6 +198,7 @@ class AutonomousInvestigator:
             "hardware_preset_id": self.config.hardware_preset_id,
             "seed": self.config.seed,
             "status": status,
+            "run_limit": self._last_run_limit,
             "runs": [run.to_dict() for run in self._runs],
             "planner": planner_status,
             "evidence": planner_status["summary"],
