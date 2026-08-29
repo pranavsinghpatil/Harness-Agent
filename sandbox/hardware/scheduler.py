@@ -67,7 +67,12 @@ class VirtualEdgeScheduler:
 
     def _process_task_queue(self, sim_time: float, dt: float) -> tuple[list[ComputeTask], float]:
         """Executes queued compute tasks given available CPU capacity in time slice dt."""
-        available_compute: float = self.profile.cpu_capacity_units_per_sec * self.profile.effective_cpu_ratio * dt
+        available_compute: float = (
+            self.profile.cpu_capacity_units_per_sec
+            * self.profile.effective_cpu_ratio
+            * self.profile.cpu_availability_ratio
+            * dt
+        )
         just_completed: list[ComputeTask] = []
 
         while self.task_queue and available_compute > 0:
@@ -156,4 +161,5 @@ class VirtualEdgeScheduler:
         self.profile.current_temperature = self.profile.thermal_ambient_temp
         self.profile.is_throttled = False
         self.profile.effective_cpu_ratio = 1.0
+        self.profile.cpu_availability_ratio = 1.0
         self.metrics = HardwareMetrics()

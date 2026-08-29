@@ -42,3 +42,4 @@ class HardwareProfile:
     thermal_cool_coeff: float = 0.02
     is_throttled: bool = False
     effective_cpu_ratio: float = 1.0
+    cpu_availability_ratio: float = 1.0

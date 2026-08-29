@@ -114,6 +114,10 @@ class FaultController:
                 input_timestamp=sim_time,
             )
             hardware.submit_task(task)
+        elif ftype == "cpu_availability":
+            hardware.profile.cpu_availability_ratio = max(
+                0.0, min(1.0, float(params.get("factor", 1.0)))
+            )
         elif ftype == "thermal_spike":
             hardware.profile.current_temperature += params.get("temp_increase", 40.0)
 
@@ -231,6 +235,8 @@ class FaultController:
             self._revert_sensor_fault(target, ftype, sensors)
         elif target.startswith("transport."):
             self._revert_transport_fault(target, ftype, params, transport)
+        elif target == "hardware.compute" and ftype == "cpu_availability":
+            hardware.profile.cpu_availability_ratio = 1.0
         elif target.startswith("actuator."):
             self._revert_actuator_fault(target, ftype, params, actuators)
 
