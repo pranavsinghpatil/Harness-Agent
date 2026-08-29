@@ -35,8 +35,8 @@ class ReliabilityEvaluationLoop:
         # Step 2: Execute Baseline Run
         baseline_run = self.run_manager.execute_baseline(evaluation.evaluation_id)
 
-        # Step 3: If Baseline Passed (No Invariant Breaches), Finalize Result
-        if not baseline_run.violations and baseline_run.status != HarnessRunStatus.SAFETY_VIOLATION:
+        # Step 3: If Baseline Passed (No Invariant Breaches and completed successfully), Finalize Result
+        if not baseline_run.violations and baseline_run.status == HarnessRunStatus.COMPLETED:
             min_clearance = baseline_run.metrics.get("min_clearance", 2.0)
             evaluation.final_result = HarnessEvaluationResult(
                 evaluation_id=evaluation.evaluation_id,

@@ -175,7 +175,11 @@ class RunManager:
         base_clearance = baseline_run.metrics.get("min_clearance", 0.0) if baseline_run else 0.0
         verify_clearance = verify_run.metrics.get("min_clearance", 0.0)
 
-        is_safe = verify_violations == 0 and verify_run.status != HarnessRunStatus.SAFETY_VIOLATION
+        is_safe = (
+            verify_violations == 0
+            and verify_run.status == HarnessRunStatus.COMPLETED
+            and verify_run.sim_duration_s > 0.0
+        )
 
         evaluation.final_result = HarnessEvaluationResult(
             evaluation_id=evaluation.evaluation_id,

@@ -86,6 +86,8 @@ class CausalTelemetryAnalyzer:
             trigger_type = FailureTriggerType.UNSAFE_STOPPING_DISTANCE
         elif "STALE" in rule_str:
             trigger_type = FailureTriggerType.STALE_OBSERVATION_ACTION
+        elif "SPEED" in rule_str or "LIMIT" in rule_str:
+            trigger_type = FailureTriggerType.SPEED_LIMIT_EXCEEDED
         else:
             trigger_type = FailureTriggerType.COLLISION
 
@@ -101,6 +103,7 @@ class CausalTelemetryAnalyzer:
             clearance = closest_frame.min_clearance
 
         v_details = getattr(violation, "details", getattr(violation, "metrics", {}))
+        obs_age = float(v_details.get("observation_age_s", v_details.get("max_age_s", 0.0)))
 
         return FailureTrigger(
             trigger_type=trigger_type,
@@ -109,7 +112,7 @@ class CausalTelemetryAnalyzer:
             vehicle_speed=speed,
             clearance=clearance,
             required_clearance=v_details.get("threshold", 0.8),
-            observation_age_s=v_details.get("observation_age_s", 0.41),
+            observation_age_s=obs_age,
             details=v_details,
         )
 

@@ -27,7 +27,7 @@ class HardwareAdapter:
         elif hasattr(env, "hardware_scheduler"):
             env.hardware_scheduler.profile = profile_copy
 
-        # 2. Configure baseline transport channel latencies for all registered sensor channels
+        # 2. Configure baseline and default transport channel latencies
         channel_mappings = {
             "camera_mipi": ["sensor.camera", "camera"],
             "lidar_serial": ["sensor.lidar", "lidar"],
@@ -42,5 +42,9 @@ class HardwareAdapter:
                 for ch_name in candidate_names:
                     if ch_name in env.transport.channels:
                         channel = env.transport.channels[ch_name]
-                        channel.base_latency_s = cfg.get("base_latency_s", channel.base_latency_s)
-                        channel.jitter_std_s = cfg.get("jitter_std_s", channel.jitter_std_s)
+                        base_lat = cfg.get("base_latency_s", channel.base_latency_s)
+                        jitter = cfg.get("jitter_std_s", channel.jitter_std_s)
+                        channel.base_latency_s = base_lat
+                        channel.default_base_latency_s = base_lat
+                        channel.jitter_std_s = jitter
+                        channel.default_jitter_std_s = jitter
