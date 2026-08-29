@@ -16,6 +16,7 @@ from harness.hypotheses import FalsificationPlan, HypothesisEngine
 from harness.orchestration.run_manager import RunManager, default_run_manager
 from harness.planning import (
     ExperimentCandidate,
+    EvidenceRecord,
     ExperimentOutcome,
     ExperimentPlanner,
     PlannerDimension,
@@ -93,7 +94,7 @@ class AutonomousInvestigator:
             max_boundary_steps=config.max_boundary_steps,
         )
         self._runs: list[InvestigationRun] = []
-        self.hypothesis_engine = HypothesisEngine()
+        self.hypothesis_engine: HypothesisEngine = HypothesisEngine()
         self._falsification_plans: list[FalsificationPlan] = []
         self._last_run_limit: Optional[int] = None
         self._last_run_was_caller_limited: bool = False
@@ -126,11 +127,11 @@ class AutonomousInvestigator:
         evaluation_id = ""
         run: Optional[HarnessRun] = None
         try:
-            overrides = self.config.perturbation_space.build_fault_overrides(
+            overrides: list[dict[str, Any]] = self.config.perturbation_space.build_fault_overrides(
                 values=dict(candidate.values),
                 experiment_id=candidate.experiment_id,
             )
-            request = EvaluationRequest(
+            request: EvaluationRequest = EvaluationRequest(
                 hardware_preset_id=self.config.hardware_preset_id,
                 scenario_id=self.config.scenario_id,
                 controller_code=self.config.controller_code,
@@ -142,10 +143,10 @@ class AutonomousInvestigator:
                     "experiment_phase": candidate.phase.value,
                 },
             )
-            evaluation = self.run_manager.create_evaluation(request)
+            evaluation: Any = self.run_manager.create_evaluation(request)
             evaluation_id = evaluation.evaluation_id
             run = self.run_manager.execute_baseline(evaluation_id)
-            outcome = self._to_outcome(run)
+            outcome: ExperimentOutcome = self._to_outcome(run)
         except Exception as exc:
             outcome = ExperimentOutcome(
                 passed=False,
@@ -156,13 +157,13 @@ class AutonomousInvestigator:
                 },
             )
 
-        record = self.planner.observe(candidate.experiment_id, outcome)
+        record: EvidenceRecord = self.planner.observe(candidate.experiment_id, outcome)
         self.hypothesis_engine.observe(record, self.planner.dimensions)
         if not outcome.passed:
-            plan = self.hypothesis_engine.propose_falsification(record, self.planner.dimensions)
+            plan: Optional[FalsificationPlan] = self.hypothesis_engine.propose_falsification(record, self.planner.dimensions)
             if plan is not None:
                 self._falsification_plans.append(plan)
-        evidence = self._build_evidence(run)
+        evidence: Optional[EvidenceSnapshot] = self._build_evidence(run)
         result = InvestigationRun(
             candidate=candidate,
             evaluation_id=evaluation_id,
@@ -225,9 +226,17 @@ class AutonomousInvestigator:
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize the complete investigation, including explicit unknowns."""
-        planner_status = self.planner.status()
-        records = self.planner.ledger.records
+        """Serialize the complete investigation and its evidence-backed state.
+
+        Returns:
+            A dictionary containing objective metadata, execution status, run
+            evidence, planner state, competing hypotheses, and falsification plans.
+            ``PARTIAL`` means the caller stopped before the configured budget;
+            ``BUDGET_EXHAUSTED`` means no more budget remains; ``COMPLETE`` means
+            the finite planner has no next candidate.
+        """
+        planner_status: dict[str, Any] = self.planner.status()
+        records: tuple[EvidenceRecord, ...] = self.planner.ledger.records
         caller_limited: bool = self._last_run_was_caller_limited
         if caller_limited:
             status: str = "PARTIAL"
