@@ -12,8 +12,11 @@ interface ScenarioControlsProps {
   maxSimTime: number;
   onMaxSimTimeChange: (time: number) => void;
   onRunScenario: () => void;
+  onStartStreaming: () => void;
+  onStopStreaming: () => void;
   onReplayRun: () => void;
   isSimulating: boolean;
+  isStreaming: boolean;
   isVerifying: boolean;
   canReplay: boolean;
 }
@@ -27,8 +30,11 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
   maxSimTime,
   onMaxSimTimeChange,
   onRunScenario,
+  onStartStreaming,
+  onStopStreaming,
   onReplayRun,
   isSimulating,
+  isStreaming,
   isVerifying,
   canReplay,
 }) => {
@@ -52,7 +58,7 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
               d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
             />
           </svg>
-          Scenario Selection
+          Scenario & Simulation Mode
         </h2>
 
         <label
@@ -65,7 +71,8 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
           id="scenario-select"
           value={selectedScenario?.id ?? ""}
           onChange={(e) => onSelectScenario(e.target.value)}
-          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 mb-3"
+          disabled={isStreaming || isSimulating}
+          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 mb-3 disabled:opacity-50"
         >
           {scenarios.map((sc) => (
             <option key={sc.id} value={sc.id}>
@@ -91,7 +98,8 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
               type="number"
               value={seed}
               onChange={(e) => onSeedChange(parseInt(e.target.value, 10) || 0)}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+              disabled={isStreaming || isSimulating}
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
             />
           </div>
           <div>
@@ -106,16 +114,40 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
               type="number"
               value={maxSimTime}
               onChange={(e) => onMaxSimTimeChange(parseFloat(e.target.value) || 1)}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
+              disabled={isStreaming || isSimulating}
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
             />
           </div>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2.5">
+          {/* Primary Action: Real-time WebSocket Stream */}
+          {isStreaming ? (
+            <button
+              onClick={onStopStreaming}
+              className="w-full py-2.5 px-4 rounded-lg bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 transition cursor-pointer animate-pulse"
+            >
+              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+              <span>Stop WebSocket Stream</span>
+            </button>
+          ) : (
+            <button
+              onClick={onStartStreaming}
+              disabled={isSimulating || !selectedScenario}
+              className="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:opacity-90 disabled:opacity-50 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+            >
+              <svg className="w-4 h-4 text-cyan-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <span>Stream Live (WebSocket)</span>
+            </button>
+          )}
+
+          {/* Secondary Action: Fast Batch Run */}
           <button
             onClick={onRunScenario}
-            disabled={isSimulating || !selectedScenario}
-            className="w-full py-2.5 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white font-medium text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+            disabled={isStreaming || isSimulating || !selectedScenario}
+            className="w-full py-2 px-4 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-900 disabled:opacity-40 text-slate-300 font-medium text-xs flex items-center justify-center gap-2 border border-slate-700 transition cursor-pointer"
           >
             {isSimulating ? (
               <>
@@ -138,26 +170,27 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
                     d="M4 12a8 8 0 018-8v8z"
                   />
                 </svg>
-                Executing Simulation...
+                Executing Batch Run...
               </>
             ) : (
               <>
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <svg className="w-3.5 h-3.5 text-slate-400" fill="currentColor" viewBox="0 0 20 20">
                   <path
                     fillRule="evenodd"
                     d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
                     clipRule="evenodd"
                   />
                 </svg>
-                Execute Episode
+                <span>Batch Simulation (REST API)</span>
               </>
             )}
           </button>
 
+          {/* Deterministic Replay Check */}
           <button
             onClick={onReplayRun}
-            disabled={!canReplay || isVerifying || isSimulating}
-            className="w-full py-2 px-4 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-900 disabled:opacity-40 text-slate-300 font-medium text-xs flex items-center justify-center gap-2 border border-slate-700 transition cursor-pointer"
+            disabled={!canReplay || isVerifying || isSimulating || isStreaming}
+            className="w-full py-2 px-4 rounded-lg bg-slate-950 hover:bg-slate-900 active:bg-slate-950 disabled:opacity-30 text-slate-400 hover:text-slate-200 font-medium text-[11px] flex items-center justify-center gap-2 border border-slate-800 transition cursor-pointer"
           >
             {isVerifying ? (
               <>
@@ -185,7 +218,7 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
             ) : (
               <>
                 <svg
-                  className="w-4 h-4 text-emerald-400"
+                  className="w-3.5 h-3.5 text-emerald-400"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -197,7 +230,7 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                   />
                 </svg>
-                Deterministic Replay Check
+                <span>Deterministic Replay Check</span>
               </>
             )}
           </button>
@@ -251,4 +284,3 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
     </div>
   );
 };
-

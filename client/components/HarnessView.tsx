@@ -70,7 +70,7 @@ export const HarnessView: React.FC<HarnessViewProps> = ({
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       {/* Top Banner */}
-      <div className="bg-gradient-to-r from-indigo-950/80 via-slate-900 to-purple-950/80 border border-indigo-500/30 rounded-2xl p-6 shadow-2xl">
+      <div className="bg-linear-to-r from-indigo-950/80 via-slate-900 to-purple-950/80 border border-indigo-500/30 rounded-2xl p-6 shadow-2xl">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2 mb-1">
@@ -93,7 +93,7 @@ export const HarnessView: React.FC<HarnessViewProps> = ({
           <button
             onClick={handleRunFullLoop}
             disabled={isRunning}
-            className="py-3 px-6 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:opacity-90 disabled:opacity-50 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+            className="py-3 px-6 rounded-xl bg-linear-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:opacity-90 disabled:opacity-50 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/30 transition cursor-pointer"
           >
             {isRunning ? (
               <>
@@ -280,7 +280,7 @@ export const HarnessView: React.FC<HarnessViewProps> = ({
                 Root Causes:
               </div>
               <ul className="list-disc list-inside text-slate-300 space-y-1 text-[11px]">
-                {evaluation.diagnosis?.root_causes.map((rc, i) => (
+                {evaluation.diagnosis?.root_causes?.map((rc, i) => (
                   <li key={i}>{rc}</li>
                 ))}
               </ul>
