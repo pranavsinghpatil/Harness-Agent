@@ -31,9 +31,9 @@ class TransportChannel:
     ) -> None:
         self.name = name
         self.rng = rng
-        self.default_base_latency_s = base_latency_s
-        self.default_jitter_std_s = jitter_std_s
-        self.default_packet_loss_rate = packet_loss_rate
+        self.default_base_latency_s: float = base_latency_s
+        self.default_jitter_std_s: float = jitter_std_s
+        self.default_packet_loss_rate: float = packet_loss_rate
         self.base_latency_s = base_latency_s
         self.jitter_std_s = jitter_std_s
         self.packet_loss_rate = packet_loss_rate

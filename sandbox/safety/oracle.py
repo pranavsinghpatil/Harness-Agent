@@ -66,7 +66,7 @@ class SafetyOracle:
         """Checks if vehicle is driving forward when obstacle is closer than the required stopping distance."""
         if state.velocity <= 0.5 or current_command.throttle <= 0.2:
             return None
-        d_stop = (
+        d_stop: float = (
             state.velocity * self.reaction_time_s
             + (state.velocity ** 2) / (2.0 * max(0.5, params.max_brake_deceleration))
         )

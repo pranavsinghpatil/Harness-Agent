@@ -114,6 +114,12 @@ class SandboxEnvironment:
 
         Args:
             scenario: The ScenarioDefinition model containing world, obstacles, and faults.
+
+        Returns:
+            None: Mutates environment world map, physics, safety oracle, and fault controller in place.
+
+        Raises:
+            KeyError: If mandatory scenario fields or initial state keys are missing.
         """
         self.scenario = scenario
         self.episode_config.max_sim_time = scenario.max_sim_time
@@ -208,7 +214,7 @@ class SandboxEnvironment:
                     self.transport.send(f"sensor.{sensor_key}", packet, sim_time)
 
         delivered_by_channel = self.transport.deliver_all_due(sim_time)
-        all_delivered = []
+        all_delivered: list[Any] = []
         for packets in delivered_by_channel.values():
             all_delivered.extend(packets)
         return all_delivered
@@ -299,13 +305,22 @@ class SandboxEnvironment:
         )
 
         delivered_packets = self._sample_and_deliver_sensors(sim_time, v_state)
-        self.hardware.step(sim_time, dt)
-
         if delivered_packets:
             self.target_agent.receive_sensor_packets(delivered_packets, sim_time)
 
-        agent_cmd = self.target_agent.step(sim_time)
-        self.actuators.submit_command(agent_cmd, sim_time)
+        ctrl_task = ComputeTask(
+            task_id=f"agent_ctrl_{self.clock.step_count}",
+            name="agent_control_cycle",
+            compute_cost_units=0.5,
+            deadline=sim_time + dt * 2.0,
+            input_timestamp=sim_time,
+        )
+        self.hardware.submit_task(ctrl_task)
+        completed_tasks = self.hardware.step(sim_time, dt)
+
+        if any(t.name == "agent_control_cycle" for t in completed_tasks):
+            agent_cmd = self.target_agent.step(sim_time)
+            self.actuators.submit_command(agent_cmd, sim_time)
 
         obs_age = 0.0
         if hasattr(self.target_agent, "perception"):

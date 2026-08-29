@@ -95,7 +95,7 @@ def run_episode(
         sc_obj = scenario
 
     # Clone scenario model to prevent mutating shared registry instance
-    sc_copy = sc_obj.model_copy(deep=True)
+    sc_copy: ScenarioDefinition = sc_obj.model_copy(deep=True)
     if seed is not None:
         sc_copy.seed = seed
 

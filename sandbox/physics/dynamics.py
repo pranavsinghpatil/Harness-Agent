@@ -66,9 +66,9 @@ class KinematicVehicleModel:
 
     def _update_steering(self, steering_target: float, dt: float) -> None:
         """Updates vehicle wheel steer angle subject to steering limits and slew rate."""
-        clamped_target = max(-self.params.max_steer_angle, min(self.params.max_steer_angle, steering_target))
-        steer_diff = clamped_target - self.state.steer_angle
-        max_steer_step = self.params.max_steer_rate * dt
+        clamped_target: float = max(-self.params.max_steer_angle, min(self.params.max_steer_angle, steering_target))
+        steer_diff: float = clamped_target - self.state.steer_angle
+        max_steer_step: float = self.params.max_steer_rate * dt
         if abs(steer_diff) <= max_steer_step:
             self.state.steer_angle = clamped_target
         else:
