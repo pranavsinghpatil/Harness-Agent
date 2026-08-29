@@ -69,7 +69,6 @@ class DeterministicReplayer:
                             difference_details=f"Frame {idx} state mismatch on {k}: {orig_state[k]} vs {rep_state[k]}",
                         )
 
-            # Check clearance and faults
             if abs(orig.get("min_clearance", 0.0) - rep.get("min_clearance", 0.0)) > 1e-3:
                 return ReplayComparisonResult(
                     is_bit_exact_match=False,

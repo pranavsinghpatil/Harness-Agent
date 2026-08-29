@@ -127,6 +127,12 @@ class SandboxEnvironment:
 
         Args:
             scenario: The ScenarioDefinition model containing world, obstacles, and faults.
+
+        Returns:
+            None: Mutates environment world map, physics, safety oracle, and fault controller in place.
+
+        Raises:
+            KeyError: If mandatory scenario fields or initial state keys are missing.
         """
         self.scenario = scenario
         self.episode_config.max_sim_time = scenario.max_sim_time
@@ -232,7 +238,7 @@ class SandboxEnvironment:
                         )
 
         delivered_by_channel = self.transport.deliver_all_due(sim_time)
-        all_delivered = []
+        all_delivered: list[Any] = []
         for ch_name, packets in delivered_by_channel.items():
             all_delivered.extend(packets)
             if packets:

@@ -67,7 +67,7 @@ class VirtualEdgeScheduler:
 
     def _process_task_queue(self, sim_time: float, dt: float) -> tuple[list[ComputeTask], float]:
         """Executes queued compute tasks given available CPU capacity in time slice dt."""
-        available_compute = self.profile.cpu_capacity_units_per_sec * self.profile.effective_cpu_ratio * dt
+        available_compute: float = self.profile.cpu_capacity_units_per_sec * self.profile.effective_cpu_ratio * dt
         just_completed: list[ComputeTask] = []
 
         while self.task_queue and available_compute > 0:
@@ -81,17 +81,18 @@ class VirtualEdgeScheduler:
                 self.task_queue.pop(0)
 
                 if sim_time > current_task.deadline:
-                    current_task.is_deadline_missed = True
-                    self.metrics.total_deadline_misses += 1
-                    self.deadline_miss_events.append(
-                        {
-                            "task_id": current_task.task_id,
-                            "name": current_task.name,
-                            "sim_time": sim_time,
-                            "deadline": current_task.deadline,
-                            "lateness": sim_time - current_task.deadline,
-                        }
-                    )
+                    if not current_task.is_deadline_missed:
+                        current_task.is_deadline_missed = True
+                        self.metrics.total_deadline_misses += 1
+                        self.deadline_miss_events.append(
+                            {
+                                "task_id": current_task.task_id,
+                                "name": current_task.name,
+                                "sim_time": sim_time,
+                                "deadline": current_task.deadline,
+                                "lateness": sim_time - current_task.deadline,
+                            }
+                        )
 
                 just_completed.append(current_task)
                 self.completed_tasks.append(current_task)

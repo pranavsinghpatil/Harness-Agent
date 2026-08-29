@@ -73,7 +73,7 @@ def _ensure_scenarios_loaded() -> None:
 
 
 def get_scenario(scenario_id: str) -> Optional[ScenarioDefinition]:
-    """Retrieves a registered scenario by ID from in-memory storage.
+    """Retrieves a registered scenario by ID from in-memory storage with alias fallback.
 
     Args:
         scenario_id: Unique string identifier of the scenario.
@@ -82,7 +82,17 @@ def get_scenario(scenario_id: str) -> Optional[ScenarioDefinition]:
         Optional[ScenarioDefinition]: The scenario definition if found, else None.
     """
     _ensure_scenarios_loaded()
-    return _SCENARIO_REGISTRY.get(scenario_id)
+    if scenario_id in _SCENARIO_REGISTRY:
+        return _SCENARIO_REGISTRY[scenario_id]
+
+    alias_map = {
+        "showcase_normal": "showcase_normal_baseline",
+        "showcase_perturbed": "showcase_perturbed_failure",
+        "empty_track": "empty_track_v1",
+    }
+    if scenario_id in alias_map and alias_map[scenario_id] in _SCENARIO_REGISTRY:
+        return _SCENARIO_REGISTRY[alias_map[scenario_id]]
+    return None
 
 
 def list_scenarios() -> list[str]:
@@ -118,14 +128,14 @@ def run_episode(
         ValueError: If a scenario string ID is provided but not found in the registry.
     """
     if isinstance(scenario, str):
-        sc_obj = _SCENARIO_REGISTRY.get(scenario)
+        sc_obj = get_scenario(scenario)
         if not sc_obj:
             raise ValueError(f"Scenario '{scenario}' not found in registry")
     else:
         sc_obj = scenario
 
     # Clone scenario model to prevent mutating shared registry instance
-    sc_copy = sc_obj.model_copy(deep=True)
+    sc_copy: ScenarioDefinition = sc_obj.model_copy(deep=True)
     if seed is not None:
         sc_copy.seed = seed
 
@@ -171,7 +181,7 @@ def replay_run(
         raise ValueError(f"Run ID '{run_id}' not found in run storage")
 
     orig_manifest, orig_frames = cached
-    scenario = _SCENARIO_REGISTRY.get(orig_manifest.scenario_id)
+    scenario = get_scenario(orig_manifest.scenario_id)
     if not scenario:
         raise ValueError(f"Scenario '{orig_manifest.scenario_id}' no longer in registry")
 
