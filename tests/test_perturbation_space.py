@@ -94,6 +94,20 @@ def test_dimension_rejects_coupled_faults_without_atomic_parameters(
         )
 
 
+def test_transport_registry_accepts_runtime_transport_family() -> None:
+    dimension: PerturbationDimension = PerturbationDimension(
+        id="lidar_latency",
+        target="transport.lidar",
+        fault_type="added_latency",
+        parameter_name="latency_ms",
+        minimum=0.0,
+        maximum=100.0,
+        baseline=0.0,
+    )
+
+    assert dimension.stress_value() == 100.0
+
+
 @pytest.mark.parametrize("bad_value", [float("inf"), float("-inf"), float("nan")])
 def test_dimension_rejects_non_finite_bounds_and_values(bad_value: float) -> None:
     with pytest.raises(ValueError, match="finite"):
@@ -157,3 +171,33 @@ def test_idle_reduced_compute_availability_does_not_report_utilization() -> None
     env.hardware.step(sim_time=0.0, dt=0.1)
 
     assert env.hardware.metrics.cpu_utilization == 0.0
+
+
+def test_clearing_hardware_faults_reverts_queued_overload_and_thermal_state() -> None:
+    env: SandboxEnvironment = SandboxEnvironment()
+    controller: FaultController = env.faults
+    overload: FaultDefinition = FaultDefinition(
+        id="overload",
+        target="hardware.compute",
+        type="overload",
+        start_time=0.0,
+        duration=10.0,
+        parameters={"compute_units": 200.0},
+    )
+    thermal: FaultDefinition = FaultDefinition(
+        id="thermal",
+        target="hardware.compute",
+        type="thermal_spike",
+        start_time=0.0,
+        duration=10.0,
+        parameters={"temp_increase": 20.0},
+    )
+    controller.set_faults([overload, thermal])
+    controller.update(1.0, env.sensors, env.transport, env.hardware, env.actuators)
+    assert env.hardware.task_queue
+    assert env.hardware.profile.current_temperature > env.hardware.profile.thermal_ambient_temp
+
+    controller.clear_active_faults(env.sensors, env.transport, env.hardware, env.actuators)
+
+    assert not env.hardware.task_queue
+    assert env.hardware.profile.current_temperature == env.hardware.profile.thermal_ambient_temp

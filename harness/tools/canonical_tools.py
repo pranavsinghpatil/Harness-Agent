@@ -8,6 +8,7 @@ from harness.orchestration.run_manager import default_run_manager
 from harness.models.evaluation import EvaluationRequest, EvaluationMode
 from harness.diagnostics.analyzer import CausalTelemetryAnalyzer
 from harness.patcher.engine import AutoCodePatcher
+from harness.investigator import AutonomousInvestigator, InvestigatorConfig
 from sandbox.api.tools import list_scenarios, get_scenario
 
 
@@ -178,3 +179,29 @@ def verify_patch(evaluation_id: str, patched_code: str) -> Dict[str, Any]:
         "verification_run": verify_run.to_dict(),
         "final_result": eval_obj.final_result.to_dict() if eval_obj and eval_obj.final_result else None,
     }
+
+
+def investigate_reliability(
+    objective: str,
+    hardware_preset_id: str = "RDK_X5",
+    scenario_id: str = "showcase_normal_baseline",
+    controller_code: Optional[str] = None,
+    seed: int = 1337,
+    budget: int = 12,
+    max_boundary_steps: int = 3,
+) -> Dict[str, Any]:
+    """Run autonomous baseline, perturbation, boundary, and interaction experiments."""
+    if not get_scenario(scenario_id):
+        raise ValueError(f"Scenario '{scenario_id}' not found.")
+    investigator = AutonomousInvestigator(
+        InvestigatorConfig(
+            objective=objective,
+            hardware_preset_id=hardware_preset_id,
+            scenario_id=scenario_id,
+            controller_code=controller_code,
+            seed=seed,
+            budget=budget,
+            max_boundary_steps=max_boundary_steps,
+        )
+    )
+    return investigator.run().to_dict()

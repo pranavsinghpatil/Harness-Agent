@@ -250,8 +250,19 @@ class FaultController:
             self._revert_sensor_fault(target, ftype, sensors)
         elif target.startswith("transport."):
             self._revert_transport_fault(target, ftype, params, transport)
-        elif target == "hardware.compute" and ftype == "cpu_availability":
-            hardware.profile.cpu_availability_ratio = 1.0
+        elif target == "hardware.compute":
+            if ftype == "cpu_availability":
+                hardware.profile.cpu_availability_ratio = 1.0
+            elif ftype == "thermal_spike":
+                hardware.profile.current_temperature = max(
+                    hardware.profile.thermal_ambient_temp,
+                    hardware.profile.current_temperature - float(params.get("temp_increase", 40.0)),
+                )
+            elif ftype == "overload":
+                overload_id = f"fault_overload_{fault.id}"
+                hardware.task_queue[:] = [
+                    task for task in hardware.task_queue if task.task_id != overload_id
+                ]
         elif target.startswith("actuator."):
             self._revert_actuator_fault(target, ftype, params, actuators)
 
