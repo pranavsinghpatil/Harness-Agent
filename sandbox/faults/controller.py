@@ -38,27 +38,34 @@ class FaultController:
         actuators: ActuatorPipeline,
     ) -> list[str]:
         """Evaluates and applies active faults at current simulation time."""
-        current_active: set[str] = set()
+        current_active_ids: set[str] = set()
+        active_fault_objs: list[FaultDefinition] = []
 
         for fault in self.scheduled_faults:
-            is_active = fault.is_active_at(sim_time)
+            if fault.is_active_at(sim_time):
+                current_active_ids.add(fault.id)
+                active_fault_objs.append(fault)
 
-            if is_active:
-                current_active.add(fault.id)
-                if fault.id not in self._active_fault_ids:
-                    # Fault just started
-                    self._apply_fault(fault, sensors, transport, hardware, actuators, sim_time)
-            else:
-                if fault.id in self._active_fault_ids:
-                    # Fault just ended
-                    self._revert_fault(fault, sensors, transport, hardware, actuators)
+        # Deactivations: faults that were active previously but ended
+        for fault in self.scheduled_faults:
+            if fault.id in self._active_fault_ids and fault.id not in current_active_ids:
+                self._revert_fault(fault, sensors, transport, hardware, actuators)
+                # Re-apply any other faults that are still active on the same target
+                for remaining in active_fault_objs:
+                    if remaining.target == fault.target:
+                        self._apply_fault(remaining, sensors, transport, hardware, actuators, sim_time)
 
-        self._active_fault_ids = current_active
+        # Activations: faults that just started
+        for fault in active_fault_objs:
+            if fault.id not in self._active_fault_ids:
+                self._apply_fault(fault, sensors, transport, hardware, actuators, sim_time)
+
+        self._active_fault_ids = current_active_ids
         return list(self._active_fault_ids)
 
     def _apply_sensor_fault(self, target: str, ftype: str, params: dict[str, Any], sensors: dict[str, BaseSensor]) -> None:
-        sensor_key = target.replace("sensor.", "")
-        sensor = sensors.get(sensor_key)
+        sensor_key: str = target.replace("sensor.", "")
+        sensor: Optional[BaseSensor] = sensors.get(sensor_key)
         if not sensor:
             return
 

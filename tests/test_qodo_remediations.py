@@ -10,6 +10,11 @@ from sandbox.telemetry.replay import DeterministicReplayer
 from target_agents.reference_agent.agent import ReferenceAutonomousAgent
 from sandbox.transport.bus import TransportBus
 from sandbox.core.rng import RngManager
+from sandbox.faults.controller import FaultController
+from sandbox.faults.schema import FaultDefinition
+from sandbox.actuators.pipeline import ActuatorPipeline
+from sandbox.hardware.scheduler import VirtualEdgeScheduler
+from sandbox.hardware.profile import HardwareProfile
 
 
 def test_footprint_clearance_and_boundary_walls() -> None:
@@ -103,3 +108,35 @@ def test_replay_comparison_detects_hash_and_clearance_mismatch() -> None:
     res = DeterministicReplayer.compare_traces(orig_frames, rep_frames, orig_hash="aaa", rep_hash="bbb")
     assert not res.is_bit_exact_match
     assert "Trace hash mismatch" in res.difference_details
+
+
+def test_overlapping_faults_preservation() -> None:
+    """Verifies that ending an earlier overlapping fault preserves active effects from remaining faults."""
+    controller = FaultController()
+    # Fault 1: brake reduced to 0.5 from t=1.0 to t=3.0
+    f1 = FaultDefinition(id="fault_1", target="actuator.brake", type="reduced_effectiveness", start_time=1.0, duration=2.0, parameters={"factor": 0.5})
+    # Fault 2: brake reduced to 0.2 from t=2.0 to t=5.0
+    f2 = FaultDefinition(id="fault_2", target="actuator.brake", type="reduced_effectiveness", start_time=2.0, duration=3.0, parameters={"factor": 0.2})
+    controller.set_faults([f1, f2])
+
+    rng_mgr = RngManager(master_seed=42)
+    actuators = ActuatorPipeline(rng=rng_mgr.get("actuator"))
+    transport = TransportBus(rng=rng_mgr.get("transport"))
+    hardware = VirtualEdgeScheduler(HardwareProfile())
+    sensors: dict[str, Any] = {}
+
+    # At t=1.5: only f1 is active -> factor = 0.5
+    controller.update(1.5, sensors, transport, hardware, actuators)
+    assert actuators.brake_effectiveness_factor == 0.5
+
+    # At t=2.5: both f1 and f2 are active -> factor = 0.2
+    controller.update(2.5, sensors, transport, hardware, actuators)
+    assert actuators.brake_effectiveness_factor == 0.2
+
+    # At t=3.5: f1 has ended, f2 is STILL active -> factor must remain 0.2, NOT reset to 1.0!
+    controller.update(3.5, sensors, transport, hardware, actuators)
+    assert actuators.brake_effectiveness_factor == 0.2
+
+    # At t=5.5: both faults ended -> factor restored to 1.0
+    controller.update(5.5, sensors, transport, hardware, actuators)
+    assert actuators.brake_effectiveness_factor == 1.0
