@@ -140,56 +140,63 @@ def build_evidence_snapshot(
         EvidenceSnapshot containing frame-level numeric signals and event links.
 
     Raises:
-        ValueError: If an event is missing canonical identity fields, has a
-            non-numeric or non-finite timestamp, or has a non-mapping payload.
+        ValueError: If an event is missing or has blank canonical identity fields,
+            belongs to another run, has a non-numeric or non-finite timestamp, or
+            has a non-mapping payload.
     """
     signal_list: list[EvidenceSignal] = []
     for frame_index, frame in enumerate(frames):
         signal_list.extend(_numeric_signals(frame, frame_index))
 
-    links: list[EvidenceLink] = []
-    for event in events:
-        required_fields: tuple[str, ...] = (
-            "event_id", "evaluation_id", "episode_id", "type", "source",
-            "sim_time", "severity", "wall_time",
-        )
-        missing_fields: list[str] = [field for field in required_fields if field not in event]
-        if missing_fields:
-            raise ValueError(f"event is missing required fields: {', '.join(missing_fields)}")
-        try:
-            sim_time: float = float(event.get("sim_time", 0.0))
-        except (TypeError, ValueError) as exc:
-            raise ValueError("event sim_time must be numeric") from exc
-        if not math.isfinite(sim_time):
-            raise ValueError("event sim_time must be finite")
-        try:
-            wall_time: float = float(event.get("wall_time"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError("event wall_time must be numeric") from exc
-        if not math.isfinite(wall_time):
-            raise ValueError("event wall_time must be finite")
-        event_payload: object = event.get("payload", {})
-        if not isinstance(event_payload, Mapping):
-            raise ValueError("event payload must be a mapping")
-        links.append(
-            EvidenceLink(
-                event_id=str(event["event_id"]),
-                evaluation_id=str(event["evaluation_id"]),
-                episode_id=str(event["episode_id"]),
-                event_type=str(event.get("type", "UNKNOWN")),
-                source=str(event.get("source", "unknown")),
-                sim_time=sim_time,
-                severity=str(event["severity"]),
-                wall_time=wall_time,
-                payload=_freeze_payload(event_payload),
-            )
-        )
+    links: list[EvidenceLink] = [_build_event_link(event, run_id) for event in events]
     links.sort(key=lambda link: (link.sim_time, link.event_type, link.source))
     return EvidenceSnapshot(
         run_id=run_id,
         trace_hash=trace_hash,
         signals=tuple(signal_list),
         event_links=tuple(links),
+    )
+
+
+def _build_event_link(event: Mapping[str, Any], run_id: str) -> EvidenceLink:
+    """Validate one canonical event and preserve its complete identity."""
+    required_fields: tuple[str, ...] = (
+        "run_id", "event_id", "evaluation_id", "episode_id", "type", "source",
+        "sim_time", "severity", "wall_time",
+    )
+    missing_fields: list[str] = [field for field in required_fields if field not in event]
+    if missing_fields:
+        raise ValueError(f"event is missing required fields: {', '.join(missing_fields)}")
+    identity_fields: tuple[str, ...] = ("run_id", "event_id", "evaluation_id", "episode_id")
+    if any(not isinstance(event[field], str) or not event[field].strip() for field in identity_fields):
+        raise ValueError("event identity fields must be non-empty strings")
+    if event["run_id"] != run_id:
+        raise ValueError(f"event run_id '{event['run_id']}' does not match snapshot run_id '{run_id}'")
+    try:
+        sim_time: float = float(event["sim_time"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("event sim_time must be numeric") from exc
+    if not math.isfinite(sim_time):
+        raise ValueError("event sim_time must be finite")
+    try:
+        wall_time: float = float(event["wall_time"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("event wall_time must be numeric") from exc
+    if not math.isfinite(wall_time):
+        raise ValueError("event wall_time must be finite")
+    event_payload: object = event.get("payload", {})
+    if not isinstance(event_payload, Mapping):
+        raise ValueError("event payload must be a mapping")
+    return EvidenceLink(
+        event_id=event["event_id"],
+        evaluation_id=event["evaluation_id"],
+        episode_id=event["episode_id"],
+        event_type=str(event["type"]),
+        source=str(event["source"]),
+        sim_time=sim_time,
+        severity=str(event["severity"]),
+        wall_time=wall_time,
+        payload=_freeze_payload(event_payload),
     )
 
 
