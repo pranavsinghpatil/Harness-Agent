@@ -44,8 +44,36 @@ def create_scenario(spec: dict[str, Any] | str) -> ScenarioDefinition:
     return scenario
 
 
+_SCENARIOS_LOADED = False
+
+def _ensure_scenarios_loaded() -> None:
+    """Ensure YAML scenarios from scenarios/ directory are loaded into registry."""
+    global _SCENARIOS_LOADED
+    if not _SCENARIOS_LOADED:
+        import glob
+        from pathlib import Path
+        base_dir = Path(__file__).resolve().parent.parent.parent
+        search_dirs = [
+            base_dir / "scenarios" / "templates",
+            base_dir / "scenarios" / "generated",
+            Path("scenarios/templates"),
+            Path("scenarios/generated"),
+        ]
+        for s_dir in search_dirs:
+            if s_dir.exists():
+                for yaml_file in s_dir.glob("*.yaml"):
+                    try:
+                        with open(yaml_file, "r", encoding="utf-8") as f:
+                            data = yaml.safe_load(f)
+                            if data and isinstance(data, dict) and "id" in data:
+                                create_scenario(data)
+                    except Exception:
+                        pass
+        _SCENARIOS_LOADED = True
+
+
 def get_scenario(scenario_id: str) -> Optional[ScenarioDefinition]:
-    """Retrieves a registered scenario by ID from in-memory storage.
+    """Retrieves a registered scenario by ID from in-memory storage with alias fallback.
 
     Args:
         scenario_id: Unique string identifier of the scenario.
@@ -53,7 +81,18 @@ def get_scenario(scenario_id: str) -> Optional[ScenarioDefinition]:
     Returns:
         Optional[ScenarioDefinition]: The scenario definition if found, else None.
     """
-    return _SCENARIO_REGISTRY.get(scenario_id)
+    _ensure_scenarios_loaded()
+    if scenario_id in _SCENARIO_REGISTRY:
+        return _SCENARIO_REGISTRY[scenario_id]
+
+    alias_map = {
+        "showcase_normal": "showcase_normal_baseline",
+        "showcase_perturbed": "showcase_perturbed_failure",
+        "empty_track": "empty_track_v1",
+    }
+    if scenario_id in alias_map and alias_map[scenario_id] in _SCENARIO_REGISTRY:
+        return _SCENARIO_REGISTRY[alias_map[scenario_id]]
+    return None
 
 
 def list_scenarios() -> list[str]:
@@ -62,6 +101,7 @@ def list_scenarios() -> list[str]:
     Returns:
         list[str]: Registered scenario IDs.
     """
+    _ensure_scenarios_loaded()
     return list(_SCENARIO_REGISTRY.keys())
 
 
@@ -88,7 +128,7 @@ def run_episode(
         ValueError: If a scenario string ID is provided but not found in the registry.
     """
     if isinstance(scenario, str):
-        sc_obj = _SCENARIO_REGISTRY.get(scenario)
+        sc_obj = get_scenario(scenario)
         if not sc_obj:
             raise ValueError(f"Scenario '{scenario}' not found in registry")
     else:
@@ -141,7 +181,7 @@ def replay_run(
         raise ValueError(f"Run ID '{run_id}' not found in run storage")
 
     orig_manifest, orig_frames = cached
-    scenario = _SCENARIO_REGISTRY.get(orig_manifest.scenario_id)
+    scenario = get_scenario(orig_manifest.scenario_id)
     if not scenario:
         raise ValueError(f"Scenario '{orig_manifest.scenario_id}' no longer in registry")
 
