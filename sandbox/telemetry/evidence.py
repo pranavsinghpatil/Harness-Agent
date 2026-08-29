@@ -40,17 +40,27 @@ class EvidenceSignal:
 class EvidenceLink:
     """A causal-looking event link anchored to simulation time and source."""
 
+    event_id: str
+    evaluation_id: str
+    episode_id: str
     event_type: str
     source: str
     sim_time: float
+    severity: str
+    wall_time: float
     payload: Mapping[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize an event link for reports and MCP responses."""
         return {
+            "event_id": self.event_id,
+            "evaluation_id": self.evaluation_id,
+            "episode_id": self.episode_id,
             "event_type": self.event_type,
             "source": self.source,
             "sim_time": self.sim_time,
+            "severity": self.severity,
+            "wall_time": self.wall_time,
             "payload": _thaw_payload(self.payload),
         }
 
@@ -80,6 +90,12 @@ class EvidenceSnapshot:
 
 def _numeric_signals(frame: TelemetryFrame, frame_index: int) -> Iterable[EvidenceSignal]:
     """Yield high-signal numeric observations from one telemetry frame."""
+    try:
+        frame_time: float = float(frame.sim_time)
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(frame_time):
+        return
     metrics: Mapping[str, Any] = frame.hardware_metrics
     vehicle: Mapping[str, Any] = frame.vehicle_state
     values: tuple[tuple[str, Any, str, str], ...] = (
@@ -98,7 +114,7 @@ def _numeric_signals(frame: TelemetryFrame, frame_index: int) -> Iterable[Eviden
                 name=name,
                 value=numeric_value,
                 unit=unit,
-                sim_time=frame.sim_time,
+                sim_time=frame_time,
                 frame_index=frame_index,
                 step=frame.step,
                 source=source,
@@ -117,14 +133,15 @@ def build_evidence_snapshot(
         run_id: Stable identifier of the simulation run.
         trace_hash: SHA-256 hash of the recorded trace.
         frames: Telemetry frames in execution order.
-        events: Event dictionaries containing ``type``, ``source``, ``sim_time``,
-            and optional ``payload`` fields.
+        events: Canonical event dictionaries containing identity, type, source,
+            simulation and wall timestamps, severity, and an optional payload.
 
     Returns:
         EvidenceSnapshot containing frame-level numeric signals and event links.
 
     Raises:
-        ValueError: If an event has a non-numeric simulation timestamp.
+        ValueError: If an event is missing canonical identity fields, has a
+            non-numeric or non-finite timestamp, or has a non-mapping payload.
     """
     signal_list: list[EvidenceSignal] = []
     for frame_index, frame in enumerate(frames):
@@ -132,20 +149,38 @@ def build_evidence_snapshot(
 
     links: list[EvidenceLink] = []
     for event in events:
+        required_fields: tuple[str, ...] = (
+            "event_id", "evaluation_id", "episode_id", "type", "source",
+            "sim_time", "severity", "wall_time",
+        )
+        missing_fields: list[str] = [field for field in required_fields if field not in event]
+        if missing_fields:
+            raise ValueError(f"event is missing required fields: {', '.join(missing_fields)}")
         try:
             sim_time: float = float(event.get("sim_time", 0.0))
         except (TypeError, ValueError) as exc:
             raise ValueError("event sim_time must be numeric") from exc
         if not math.isfinite(sim_time):
             raise ValueError("event sim_time must be finite")
+        try:
+            wall_time: float = float(event.get("wall_time"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("event wall_time must be numeric") from exc
+        if not math.isfinite(wall_time):
+            raise ValueError("event wall_time must be finite")
         event_payload: object = event.get("payload", {})
         if not isinstance(event_payload, Mapping):
             raise ValueError("event payload must be a mapping")
         links.append(
             EvidenceLink(
+                event_id=str(event["event_id"]),
+                evaluation_id=str(event["evaluation_id"]),
+                episode_id=str(event["episode_id"]),
                 event_type=str(event.get("type", "UNKNOWN")),
                 source=str(event.get("source", "unknown")),
                 sim_time=sim_time,
+                severity=str(event["severity"]),
+                wall_time=wall_time,
                 payload=_freeze_payload(event_payload),
             )
         )

@@ -27,8 +27,8 @@ def test_snapshot_preserves_signal_provenance_and_event_order() -> None:
         "trace_1",
         [_frame(4, 0.04, 1.2), _frame(5, 0.05, 0.7)],
         [
-            {"type": "INVARIANT_BREACHED", "source": "oracle", "sim_time": 0.05},
-            {"type": "FAULT_INJECTED", "source": "faults", "sim_time": 0.01},
+            {"event_id": "evt_2", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "INVARIANT_BREACHED", "source": "oracle", "sim_time": 0.05, "severity": "ERROR", "wall_time": 2.0},
+            {"event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT_INJECTED", "source": "faults", "sim_time": 0.01, "severity": "INFO", "wall_time": 1.0},
         ],
     )
 
@@ -36,12 +36,14 @@ def test_snapshot_preserves_signal_provenance_and_event_order() -> None:
     assert [signal.frame_index for signal in clearance] == [0, 1]
     assert clearance[1].sim_time == 0.05
     assert [link.event_type for link in snapshot.event_links] == ["FAULT_INJECTED", "INVARIANT_BREACHED"]
+    assert snapshot.event_links[0].event_id == "evt_1"
+    assert snapshot.event_links[0].evaluation_id == "eval_1"
     assert snapshot.to_dict()["signals"][0]["source"] == "safety.oracle"
 
 
 def test_snapshot_rejects_invalid_event_time() -> None:
     try:
-        build_evidence_snapshot("run_1", "trace_1", [], [{"sim_time": "later"}])
+        build_evidence_snapshot("run_1", "trace_1", [], [{"event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "sim_time": "later", "severity": "INFO", "wall_time": 1.0}])
     except ValueError as exc:
         assert str(exc) == "event sim_time must be numeric"
     else:
@@ -49,7 +51,7 @@ def test_snapshot_rejects_invalid_event_time() -> None:
 
     for invalid_time in ("nan", float("inf")):
         try:
-            build_evidence_snapshot("run_1", "trace_1", [], [{"sim_time": invalid_time}])
+            build_evidence_snapshot("run_1", "trace_1", [], [{"event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "sim_time": invalid_time, "severity": "INFO", "wall_time": 1.0}])
         except ValueError as exc:
             assert "finite" in str(exc)
         else:
@@ -65,11 +67,16 @@ def test_snapshot_omits_missing_or_nonfinite_measurements() -> None:
     assert snapshot.signals_named("hardware.cpu_utilization") == ()
     assert snapshot.signals_named("hardware.temperature") == ()
 
+    invalid_frame: TelemetryFrame = _frame(2, 0.02, 1.0)
+    invalid_frame.sim_time = float("nan")
+    invalid_snapshot: EvidenceSnapshot = build_evidence_snapshot("run_1", "trace_1", [invalid_frame])
+    assert invalid_snapshot.signals == ()
+
 
 def test_snapshot_freezes_nested_event_payload() -> None:
     payload: dict[str, object] = {"details": {"faults": ["camera"]}}
     snapshot: EvidenceSnapshot = build_evidence_snapshot(
-        "run_1", "trace_1", [], [{"type": "FAULT", "sim_time": 0.1, "payload": payload}]
+        "run_1", "trace_1", [], [{"event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "sim_time": 0.1, "severity": "INFO", "wall_time": 1.0, "payload": payload}]
     )
     payload["details"] = {"faults": ["changed"]}
 
@@ -80,3 +87,13 @@ def test_snapshot_freezes_nested_event_payload() -> None:
         pass
     else:
         raise AssertionError("event payload should be immutable")
+
+
+def test_snapshot_rejects_missing_event_timestamp_and_preserves_identity() -> None:
+    event: dict[str, object] = {"event_id": "evt_1", "evaluation_id": "eval_1", "episode_id": "ep_1", "type": "FAULT", "source": "faults", "severity": "INFO", "wall_time": 1.0}
+    try:
+        build_evidence_snapshot("run_1", "trace_1", [], [event])
+    except ValueError as exc:
+        assert "required fields" in str(exc)
+    else:
+        raise AssertionError("missing event timestamp should be rejected")
