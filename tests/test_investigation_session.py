@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import queue
 import threading
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from harness.investigator import InvestigatorConfig
 from harness.models.evaluation import EvaluationRequest, HarnessRun, HarnessRunStatus
-from harness.models.events import HarnessEventType
+from harness.models.events import HarnessEvent, HarnessEventType
 from harness.orchestration.investigation import (
+    InvestigationEventSubscription,
     InvestigationSession,
     InvestigationSessionStore,
     InvestigationStatus,
@@ -26,7 +29,7 @@ class FakeRunManager:
 
     def create_evaluation(self, request: EvaluationRequest) -> SimpleNamespace:
         self.counter += 1
-        evaluation_id = f"fake_eval_{self.counter}"
+        evaluation_id: str = f"fake_eval_{self.counter}"
         self.requests[evaluation_id] = request
         return SimpleNamespace(evaluation_id=evaluation_id)
 
@@ -46,8 +49,8 @@ class BlockingRunManager(FakeRunManager):
 
     def __init__(self) -> None:
         super().__init__()
-        self.started = threading.Event()
-        self.release = threading.Event()
+        self.started: threading.Event = threading.Event()
+        self.release: threading.Event = threading.Event()
 
     def execute_baseline(self, evaluation_id: str) -> HarnessRun:
         self.started.set()
@@ -56,18 +59,18 @@ class BlockingRunManager(FakeRunManager):
 
 
 def test_investigation_session_runs_in_background_and_replays_events() -> None:
-    session = InvestigationSession(
+    session: InvestigationSession = InvestigationSession(
         InvestigatorConfig(objective="Prove baseline execution is healthy.", budget=1),
         run_manager=FakeRunManager(),
     )
-    subscription = session.subscribe()
+    subscription: InvestigationEventSubscription = session.subscribe()
 
     session.start()
 
     assert session.wait(timeout=5.0) is True
     assert session.status == InvestigationStatus.COMPLETED
-    events = session.events()
-    event_types = [event.type for event in events]
+    events: tuple[HarnessEvent, ...] = session.events()
+    event_types: list[HarnessEventType] = [event.type for event in events]
 
     assert event_types[0] == HarnessEventType.INVESTIGATION_CREATED
     assert HarnessEventType.INVESTIGATION_STARTED in event_types
@@ -80,8 +83,8 @@ def test_investigation_session_runs_in_background_and_replays_events() -> None:
     assert event_types[-1] == HarnessEventType.INVESTIGATION_COMPLETED
     assert all(event.investigation_id == session.investigation_id for event in events)
 
-    replayed_types = [event.type for event in subscription.events]
-    live_types = []
+    replayed_types: list[HarnessEventType] = [event.type for event in subscription.events]
+    live_types: list[HarnessEventType] = []
     while not subscription.queue.empty():
         live_types.append(subscription.queue.get_nowait().type)
     assert replayed_types == event_types[:1]
@@ -89,14 +92,14 @@ def test_investigation_session_runs_in_background_and_replays_events() -> None:
 
 
 def test_session_snapshot_exposes_live_investigation_state() -> None:
-    session = InvestigationSession(
+    session: InvestigationSession = InvestigationSession(
         InvestigatorConfig(objective="Expose structured state.", budget=1),
         run_manager=FakeRunManager(),
     )
     session.start()
     assert session.wait(timeout=5.0) is True
 
-    snapshot = session.snapshot()
+    snapshot: dict[str, Any] = session.snapshot()
     assert snapshot["status"] == "COMPLETED"
     assert snapshot["completed_experiments"] == 1
     assert "current_phase" in snapshot
@@ -106,10 +109,10 @@ def test_session_snapshot_exposes_live_investigation_state() -> None:
 
 
 def test_store_rejects_over_capacity_without_starting_unbounded_work() -> None:
-    store = InvestigationSessionStore(max_workers=1, max_queued=0)
-    manager = BlockingRunManager()
-    first = store.create(InvestigatorConfig(objective="first", budget=1), manager)
-    second = store.create(InvestigatorConfig(objective="second", budget=1), manager)
+    store: InvestigationSessionStore = InvestigationSessionStore(max_workers=1, max_queued=0)
+    manager: BlockingRunManager = BlockingRunManager()
+    first: InvestigationSession = store.create(InvestigatorConfig(objective="first", budget=1), manager)
+    second: InvestigationSession = store.create(InvestigatorConfig(objective="second", budget=1), manager)
 
     assert store.start(first) is True
     assert manager.started.wait(timeout=5.0) is True
@@ -121,10 +124,10 @@ def test_store_rejects_over_capacity_without_starting_unbounded_work() -> None:
 
 
 def test_duplicate_start_does_not_consume_an_admission_permit() -> None:
-    store = InvestigationSessionStore(max_workers=1, max_queued=0)
-    manager = BlockingRunManager()
-    first = store.create(InvestigatorConfig(objective="first", budget=1), manager)
-    second = store.create(InvestigatorConfig(objective="second", budget=1), manager)
+    store: InvestigationSessionStore = InvestigationSessionStore(max_workers=1, max_queued=0)
+    manager: BlockingRunManager = BlockingRunManager()
+    first: InvestigationSession = store.create(InvestigatorConfig(objective="first", budget=1), manager)
+    second: InvestigationSession = store.create(InvestigatorConfig(objective="second", budget=1), manager)
 
     assert store.start(first) is True
     assert manager.started.wait(timeout=5.0) is True
@@ -137,17 +140,25 @@ def test_duplicate_start_does_not_consume_an_admission_permit() -> None:
 
 
 def test_terminal_session_lru_updates_on_successful_lookup() -> None:
-    store = InvestigationSessionStore(max_workers=1, max_queued=0, max_sessions=2)
-    first = store.create(InvestigatorConfig(objective="first", budget=1), FakeRunManager())
-    second = store.create(InvestigatorConfig(objective="second", budget=1), FakeRunManager())
+    store: InvestigationSessionStore = InvestigationSessionStore(max_workers=1, max_queued=0, max_sessions=2)
+    first: InvestigationSession = store.create(InvestigatorConfig(objective="first", budget=1), FakeRunManager())
+    second: InvestigationSession = store.create(InvestigatorConfig(objective="second", budget=1), FakeRunManager())
     first.fail("test failure")
     second.fail("test failure")
     first.last_accessed_at = 2.0
     second.last_accessed_at = 1.0
     assert store.get(first.investigation_id) is first
 
-    third = store.create(InvestigatorConfig(objective="third", budget=1), FakeRunManager())
+    third: InvestigationSession = store.create(InvestigatorConfig(objective="third", budget=1), FakeRunManager())
 
     assert store.get(first.investigation_id) is first
     assert store.get(second.investigation_id) is None
     assert store.get(third.investigation_id) is third
+
+
+def test_create_enforces_max_sessions_when_sessions_active() -> None:
+    store: InvestigationSessionStore = InvestigationSessionStore(max_workers=1, max_queued=0, max_sessions=2)
+    first: InvestigationSession = store.create(InvestigatorConfig(objective="first", budget=1), FakeRunManager())
+    second: InvestigationSession = store.create(InvestigatorConfig(objective="second", budget=1), FakeRunManager())
+    with pytest.raises(RuntimeError, match="reached capacity"):
+        store.create(InvestigatorConfig(objective="third", budget=1), FakeRunManager())

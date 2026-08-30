@@ -76,7 +76,7 @@ class InvestigationSession:
         severity: EventSeverity = EventSeverity.INFO,
     ) -> HarnessEvent:
         """Append an event and fan it out to current subscribers."""
-        event = HarnessEvent(
+        event: HarnessEvent = HarnessEvent(
             evaluation_id=self.investigation_id,
             run_id="",
             episode_id="",
@@ -89,7 +89,7 @@ class InvestigationSession:
         )
         with self._lock:
             self._events.append(event)
-            subscribers = tuple(self._subscribers)
+            subscribers: tuple[queue.Queue[HarnessEvent], ...] = tuple(self._subscribers)
         for subscriber in subscribers:
             subscriber.put(event)
         return event
@@ -103,7 +103,7 @@ class InvestigationSession:
                     self._result_snapshot = deepcopy(self._investigator.to_dict())
                 except Exception:
                     pass
-            subscribers = tuple(self._subscribers)
+            subscribers: tuple[queue.Queue[HarnessEvent], ...] = tuple(self._subscribers)
         for subscriber in subscribers:
             subscriber.put(event)
 
@@ -169,7 +169,7 @@ class InvestigationSession:
     def _run(self) -> None:
         """Execute the deterministic investigator and close the session lifecycle."""
         try:
-            investigator = AutonomousInvestigator(
+            investigator: AutonomousInvestigator = AutonomousInvestigator(
                 self.config,
                 run_manager=self.run_manager,
                 event_callback=self._on_investigator_event,
@@ -205,7 +205,7 @@ class InvestigationSession:
 
     def wait(self, timeout: Optional[float] = None) -> bool:
         """Wait for completion and return whether the worker has stopped."""
-        future = self._future
+        future: Optional[Future[None]] = self._future
         if future is None:
             return self.status in {InvestigationStatus.COMPLETED, InvestigationStatus.FAILED}
         try:
@@ -218,7 +218,7 @@ class InvestigationSession:
         """Subscribe without losing events emitted during the history snapshot."""
         subscriber: queue.Queue[HarnessEvent] = queue.Queue()
         with self._lock:
-            history = tuple(self._events)
+            history: tuple[HarnessEvent, ...] = tuple(self._events)
             self._subscribers.add(subscriber)
         return InvestigationEventSubscription(events=history, queue=subscriber)
 
@@ -235,13 +235,13 @@ class InvestigationSession:
     def snapshot(self) -> dict[str, object]:
         """Return the frontend/API representation of current session state."""
         with self._lock:
-            status = self.status
-            error = self.error
-            created_at = self.created_at
-            started_at = self.started_at
-            finished_at = self.finished_at
-            event_count = len(self._events)
-            result = deepcopy(self._result_snapshot)
+            status: InvestigationStatus = self.status
+            error: Optional[str] = self.error
+            created_at: float = self.created_at
+            started_at: Optional[float] = self.started_at
+            finished_at: Optional[float] = self.finished_at
+            event_count: int = len(self._events)
+            result: Optional[dict[str, object]] = deepcopy(self._result_snapshot)
         state: dict[str, object] = self._derive_snapshot_state(result)
         return {
             "investigation_id": self.investigation_id,
@@ -343,8 +343,8 @@ class InvestigationSession:
     def evaluation_ids(self) -> tuple[str, ...]:
         """Return evaluation IDs retained by this session for cleanup."""
         with self._lock:
-            result = deepcopy(self._result_snapshot)
-            investigator = self._investigator
+            result: Optional[dict[str, object]] = deepcopy(self._result_snapshot)
+            investigator: Optional[AutonomousInvestigator] = self._investigator
         owned: set[str] = set(investigator.evaluation_ids if investigator else ())
         if result:
             owned.update(
@@ -373,8 +373,8 @@ class InvestigationSessionStore:
             max_workers=max_workers, thread_name_prefix="investigation"
         )
         self._admission = threading.BoundedSemaphore(max_workers + max_queued)
-        self._retention_seconds = retention_seconds
-        self._max_sessions = max_sessions
+        self._retention_seconds: float = retention_seconds
+        self._max_sessions: int = max_sessions
 
     def _release_slot(self) -> None:
         """Release one admitted worker or queued job slot."""
@@ -382,7 +382,7 @@ class InvestigationSessionStore:
 
     def _discard_evaluations(self, session: InvestigationSession) -> None:
         """Remove session-owned evaluations when a session leaves retention."""
-        remover = getattr(session.run_manager, "remove_evaluation", None)
+        remover: Optional[Callable[[str], None]] = getattr(session.run_manager, "remove_evaluation", None)
         if remover is None:
             return
         for evaluation_id in session.evaluation_ids():
@@ -390,8 +390,8 @@ class InvestigationSessionStore:
 
     def _evict_locked(self, reserved_slots: int = 0) -> None:
         """Apply terminal-session TTL and LRU bounds; caller holds the store lock."""
-        now = time.time()
-        expired = [
+        now: float = time.time()
+        expired: list[InvestigationSession] = [
             session
             for session in self._sessions.values()
             if session.status in {InvestigationStatus.COMPLETED, InvestigationStatus.FAILED}
@@ -401,7 +401,7 @@ class InvestigationSessionStore:
         for session in expired:
             self._sessions.pop(session.investigation_id, None)
             self._discard_evaluations(session)
-        terminal = sorted(
+        terminal: list[InvestigationSession] = sorted(
             (
                 session
                 for session in self._sessions.values()
@@ -425,10 +425,14 @@ class InvestigationSessionStore:
         """Create and retain a new session without starting its worker."""
         with self._lock:
             self._evict_locked(reserved_slots=1)
+            if len(self._sessions) >= self._max_sessions:
+                raise RuntimeError(
+                    f"Investigation session store reached capacity ({self._max_sessions}) with active sessions"
+                )
             for _ in range(3):
-                investigation_id = f"investigation_{uuid.uuid4()}"
+                investigation_id: str = f"investigation_{uuid.uuid4()}"
                 if investigation_id not in self._sessions:
-                    session = InvestigationSession(
+                    session: InvestigationSession = InvestigationSession(
                         config,
                         run_manager=run_manager,
                         investigation_id=investigation_id,
@@ -454,7 +458,7 @@ class InvestigationSessionStore:
             session.fail("investigation execution capacity exhausted")
             return False
         try:
-            started = session.start(executor=self._executor, on_finished=self._release_slot)
+            started: bool = session.start(executor=self._executor, on_finished=self._release_slot)
         except Exception:
             self._release_slot()
             raise
@@ -466,7 +470,7 @@ class InvestigationSessionStore:
         """Look up a session by its stable public identifier."""
         with self._lock:
             self._evict_locked()
-            session = self._sessions.get(investigation_id)
+            session: Optional[InvestigationSession] = self._sessions.get(investigation_id)
             if session is not None:
                 session.touch()
             return session
@@ -491,7 +495,7 @@ class InvestigationSessionStore:
             RuntimeError: If the requested session is still running.
         """
         with self._lock:
-            session = self._sessions.get(investigation_id)
+            session: Optional[InvestigationSession] = self._sessions.get(investigation_id)
             if session is None:
                 return False
             if session.status == InvestigationStatus.RUNNING:
