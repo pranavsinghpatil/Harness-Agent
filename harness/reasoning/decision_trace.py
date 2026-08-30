@@ -106,7 +106,7 @@ class DecisionTraceBuilder:
             post_observation_leading_hypothesis_id=leading_id,
             information_gain_estimate=cls._information_value(candidate.phase, len(pre_ids)),
             outcome_classification=outcome_classification,
-            observation=cls._observation(outcome_classification),
+            observation=cls._observation(outcome_classification, outcome),
             rationale=(
                 f"{candidate.rationale} Selection basis: bounded planner progression; "
                 "post-observation hypotheses are recorded separately."
@@ -164,11 +164,14 @@ class DecisionTraceBuilder:
         return "PASS" if outcome.passed else "UNCLASSIFIED_FAILURE"
 
     @staticmethod
-    def _observation(classification: str) -> str:
+    def _observation(classification: str, outcome: ExperimentOutcome) -> str:
         """Render a precise, structured observation for consumers."""
+        if classification == "EXECUTION_ERROR":
+            details: dict[str, Any] = dict(outcome.details)
+            stage: str = str(details.get("execution_stage", "investigator execution"))
+            return f"Investigator reported an execution error during {stage}."
         messages: dict[str, str] = {
             "SAFETY_VIOLATION": "System 1 reported a safety violation.",
-            "EXECUTION_ERROR": "System 1 reported an execution error.",
             "RUN_FAILURE": "System 1 reported a failed run status.",
             "CONTROLLER_UNHEALTHY": "System 1 reported an unhealthy controller.",
             "TASK_INCOMPLETE": "System 1 reported an incomplete task.",

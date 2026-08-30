@@ -134,6 +134,30 @@ def test_incomplete_completed_run_is_not_passing_evidence() -> None:
     assert outcome.passed is False
 
 
+def test_failed_evidence_finalization_does_not_mutate_audit_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    investigator: AutonomousInvestigator = AutonomousInvestigator(
+        InvestigatorConfig(objective="Keep finalization atomic.", budget=1),
+        run_manager=FakeRunManager(),
+    )
+    candidate = investigator.planner.plan_next()
+    assert candidate is not None
+
+    def fail_evidence(run: HarnessRun | None) -> Any:
+        raise ValueError("malformed event evidence")
+
+    monkeypatch.setattr(AutonomousInvestigator, "_build_evidence", staticmethod(fail_evidence))
+    try:
+        investigator._finalize_candidate(candidate, "", ExperimentOutcome(passed=True), HarnessRun())
+    except ValueError as exc:
+        assert str(exc) == "malformed event evidence"
+    else:
+        raise AssertionError("evidence failure should abort finalization")
+
+    assert investigator.planner.ledger.records == ()
+    assert investigator.hypothesis_engine.hypotheses == ()
+    assert investigator.to_dict()["decision_trace"] == []
+
+
 def test_rejected_run_limit_does_not_mutate_investigation_status() -> None:
     investigator: AutonomousInvestigator = AutonomousInvestigator(
         InvestigatorConfig(objective="Reject invalid limits."),

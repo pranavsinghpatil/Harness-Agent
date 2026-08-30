@@ -71,7 +71,7 @@ def test_decision_trace_preserves_non_safety_failure_classification() -> None:
         candidate=candidate,
         outcome=ExperimentOutcome(
             passed=False,
-            details={"execution_error": "TimeoutError"},
+            details={"execution_error": "TimeoutError", "execution_stage": "evaluation creation"},
         ),
         pre_execution_hypotheses=(),
         post_observation_hypotheses=(),
@@ -79,7 +79,7 @@ def test_decision_trace_preserves_non_safety_failure_classification() -> None:
     )
 
     assert trace.outcome_classification == "EXECUTION_ERROR"
-    assert trace.observation == "System 1 reported an execution error."
+    assert trace.observation == "Investigator reported an execution error during evaluation creation."
 
 
 def test_decision_trace_keeps_refuted_hypotheses_historical() -> None:

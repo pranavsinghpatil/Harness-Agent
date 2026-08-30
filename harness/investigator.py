@@ -131,11 +131,13 @@ class AutonomousInvestigator:
         """Compile and execute one candidate while preserving structured failures."""
         evaluation_id = ""
         run: Optional[HarnessRun] = None
+        stage: str = "fault override construction"
         try:
             overrides: list[dict[str, Any]] = self.config.perturbation_space.build_fault_overrides(
                 values=dict(candidate.values),
                 experiment_id=candidate.experiment_id,
             )
+            stage = "evaluation creation"
             request: EvaluationRequest = EvaluationRequest(
                 hardware_preset_id=self.config.hardware_preset_id,
                 scenario_id=self.config.scenario_id,
@@ -150,6 +152,7 @@ class AutonomousInvestigator:
             )
             evaluation: HarnessEvaluation = self.run_manager.create_evaluation(request)
             evaluation_id = evaluation.evaluation_id
+            stage = "System 1 execution"
             run = self.run_manager.execute_baseline(evaluation_id)
             outcome: ExperimentOutcome = self._to_outcome(run)
         except Exception as exc:
@@ -158,6 +161,7 @@ class AutonomousInvestigator:
                 violation_count=0,
                 details={
                     "execution_error": type(exc).__name__,
+                    "execution_stage": stage,
                     "message": str(exc),
                 },
             )
@@ -174,6 +178,7 @@ class AutonomousInvestigator:
         run: Optional[HarnessRun],
     ) -> InvestigationRun:
         """Record outcome, update beliefs, and create the run's audit trace."""
+        evidence: Optional[EvidenceSnapshot] = self._build_evidence(run)
         pre_execution_hypotheses: tuple[Hypothesis, ...] = self.hypothesis_engine.hypotheses
         record: EvidenceRecord = self.planner.observe(candidate.experiment_id, outcome)
         self.hypothesis_engine.observe(record, self.planner.dimensions)
@@ -195,7 +200,7 @@ class AutonomousInvestigator:
             candidate=candidate,
             evaluation_id=evaluation_id,
             outcome=outcome,
-            evidence=self._build_evidence(run),
+            evidence=evidence,
             decision_trace=decision_trace,
         )
 
