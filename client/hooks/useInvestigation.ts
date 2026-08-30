@@ -171,11 +171,34 @@ function reduceBatch(prev: UseInvestigationState, batch: HarnessEvent[]): UseInv
   const newAllFrames = { ...prev.allExperimentFrames };
   let newLatestTelemetry = prev.latestTelemetry;
 
-  // Append batch to display events ring buffer, capped at MAX_EVENTS_BUFFER (500)
-  let newEvents = prev.events.concat(batch);
-  if (newEvents.length > MAX_EVENTS_BUFFER) {
-    newEvents = newEvents.slice(-MAX_EVENTS_BUFFER);
-  }
+  // Append batch to display events: preserve all System 2 & Safety events while capping high-frequency System 1 ticks
+  const isHighValueEvent = (type: string, severity?: string) => {
+    if (severity === "CRITICAL" || severity === "ERROR" || severity === "WARNING") return true;
+    return (
+      type.startsWith("INVESTIGATION_") ||
+      type.startsWith("EXPERIMENT_") ||
+      type.startsWith("HYPOTHESIS_") ||
+      type.startsWith("EVIDENCE_") ||
+      type.startsWith("DECISION_") ||
+      type.startsWith("NEXT_") ||
+      type.startsWith("DIAGNOSIS_") ||
+      type.startsWith("PATCH_") ||
+      type.startsWith("VERIFICATION_") ||
+      type.startsWith("REGRESSION_") ||
+      type.startsWith("CONCLUSION_") ||
+      type.includes("VIOLATION") ||
+      type.includes("BREACH") ||
+      type.includes("COLLISION")
+    );
+  };
+
+  const highValue = prev.events.filter((e) => isHighValueEvent(e.type, e.severity));
+  const newHighValue = batch.filter((e) => isHighValueEvent(e.type, e.severity));
+  const newSystem1 = batch.filter((e) => !isHighValueEvent(e.type, e.severity));
+  const prevSystem1 = prev.events.filter((e) => !isHighValueEvent(e.type, e.severity));
+  const combinedSystem1 = [...prevSystem1, ...newSystem1].slice(-100);
+  const combinedHighValue = [...highValue, ...newHighValue].slice(-300);
+  let newEvents = [...combinedHighValue, ...combinedSystem1];
 
   for (const event of batch) {
     const p = (event.payload || {}) as unknown as EventPayloadData;
@@ -207,6 +230,18 @@ function reduceBatch(prev: UseInvestigationState, batch: HarnessEvent[]): UseInv
         break;
 
       case "EXPERIMENT_STARTED":
+        if (p.experiment) {
+          newCurrentExp = p.experiment as ExperimentCandidate;
+        } else if (p.experiment_id || event.experiment_id) {
+          const eid = (p.experiment_id as string) || event.experiment_id || "";
+          newCurrentExp = {
+            experiment_id: eid,
+            values: p.values || {},
+            phase: (p.phase as any) || (eid === "exp_001" ? "BASELINE" : "SCREEN"),
+            rationale: (p.rationale as string) || "",
+            parent_experiment_ids: p.parent_experiment_ids || [],
+          };
+        }
         newActiveFrames = [];
         break;
 
@@ -227,25 +262,48 @@ function reduceBatch(prev: UseInvestigationState, batch: HarnessEvent[]): UseInv
         if (p.frame || p.telemetry_frame) {
           const f = (p.frame || p.telemetry_frame) as TelemetryFrame;
           newActiveFrames.push(f);
-          newLatestTelemetry = f;
         } else if (p.vehicle_state || p.sim_time !== undefined || event.sim_time !== undefined) {
+          const curSimTime = p.sim_time ?? event.sim_time ?? (newLatestTelemetry?.sim_time ? newLatestTelemetry.sim_time + 0.01 : 0);
+          const prevSimTime = newLatestTelemetry?.sim_time ?? 0;
+          const dt = Math.max(0, Math.min(0.1, curSimTime - prevSimTime));
+
           const lastVState: VehicleState = newLatestTelemetry?.vehicle_state || {
             x: 5.0,
             y: 5.0,
             heading: 0,
-            velocity: 0,
+            velocity: 1.5,
           };
-          const vState: VehicleState = p.vehicle_state || (
-            p.vehicle_x !== undefined && p.vehicle_y !== undefined
-              ? {
-                  x: p.vehicle_x,
-                  y: p.vehicle_y,
-                  heading: p.heading ?? lastVState.heading,
-                  velocity: p.velocity ?? lastVState.velocity,
-                  steer_angle: p.steer_angle ?? lastVState.steer_angle,
-                }
-              : lastVState
-          );
+
+          let vState: VehicleState;
+          if (p.vehicle_state) {
+            vState = p.vehicle_state;
+          } else if (p.vehicle_x !== undefined && p.vehicle_y !== undefined) {
+            vState = {
+              x: p.vehicle_x,
+              y: p.vehicle_y,
+              heading: p.heading ?? lastVState.heading,
+              velocity: p.velocity ?? lastVState.velocity,
+              steer_angle: p.steer_angle ?? lastVState.steer_angle,
+            };
+          } else {
+            // Live dead-reckoning approximation from commands / velocity so the 2D rover animates smoothly in real time
+            const cmdThrottle = (p.throttle as number) ?? (p.actuator_command?.throttle as number) ?? newLatestTelemetry?.actuator_command?.throttle ?? 0.6;
+            const cmdBrake = (p.brake as number) ?? (p.actuator_command?.brake as number) ?? newLatestTelemetry?.actuator_command?.brake ?? 0;
+            const cmdSteer = (p.steering as number) ?? (p.actuator_command?.steering as number) ?? newLatestTelemetry?.actuator_command?.steering ?? 0;
+            
+            const currentSpeed = (p.velocity as number) ?? Math.max(0, (lastVState.velocity || 1.5) + (cmdThrottle * 2.0 - cmdBrake * 4.0) * dt);
+            const currentHeading = (p.heading as number) ?? (lastVState.heading + cmdSteer * 0.2 * dt);
+            const posX = (lastVState.x ?? 5.0) + currentSpeed * Math.cos(currentHeading) * dt;
+            const posY = (lastVState.y ?? 5.0) + currentSpeed * Math.sin(currentHeading) * dt;
+
+            vState = {
+              x: Number(posX.toFixed(3)),
+              y: Number(posY.toFixed(3)),
+              heading: Number(currentHeading.toFixed(3)),
+              velocity: Number(currentSpeed.toFixed(3)),
+              steer_angle: cmdSteer,
+            };
+          }
 
           let activeFaultsList = p.active_faults || (newLatestTelemetry?.active_faults ? [...newLatestTelemetry.active_faults] : []);
           if (event.type === "FAULT_INJECTED" && p.fault_id) {
@@ -349,23 +407,26 @@ function reduceBatch(prev: UseInvestigationState, batch: HarnessEvent[]): UseInv
         newCompletedExp += 1;
         const expId =
           (p.experiment_id as string) ||
+          event.experiment_id ||
           p.experiment?.experiment_id ||
           newCurrentExp?.experiment_id ||
           `exp_${newCompletedExp}`;
 
-        if (newActiveFrames.length > 0) {
+        if (newActiveFrames.length > 0 && !newAllFrames[expId]) {
           newAllFrames[expId] = newActiveFrames;
         }
 
         const expCandidate: ExperimentCandidate =
           (p.experiment as ExperimentCandidate) ||
-          newCurrentExp || {
-            experiment_id: expId,
-            values: {},
-            phase: "SCREEN",
-            rationale: "",
-            parent_experiment_ids: [],
-          };
+          (newCurrentExp && newCurrentExp.experiment_id === expId
+            ? newCurrentExp
+            : {
+                experiment_id: expId,
+                values: p.values || {},
+                phase: (p.phase as any) || (expId === "exp_001" ? "BASELINE" : "SCREEN"),
+                rationale: (p.rationale as string) || "",
+                parent_experiment_ids: p.parent_experiment_ids || [],
+              });
 
         const runOutcome: ExperimentOutcome =
           (p.outcome as ExperimentOutcome) || {
@@ -377,7 +438,7 @@ function reduceBatch(prev: UseInvestigationState, batch: HarnessEvent[]): UseInv
           };
 
         const runItem: InvestigationRun = {
-          evaluation_id: (p.evaluation_id as string) || "",
+          evaluation_id: (p.evaluation_id as string) || event.evaluation_id || "",
           experiment: expCandidate,
           outcome: runOutcome,
           evidence: (p.evidence as EvidenceSnapshot) || null,
@@ -643,9 +704,6 @@ export function useInvestigation(apiBase: string) {
       if (!evaluationId || !experimentId) return;
       if (hydratingEvaluationsRef.current.has(evaluationId)) return;
 
-      // Don't re-fetch if we already have full telemetry frames cached
-      if ((stateRef.current.allExperimentFrames[experimentId]?.length || 0) > 10) return;
-
       const expectedSessionId = stateRef.current.investigationId;
       hydratingEvaluationsRef.current.add(evaluationId);
       try {
@@ -665,7 +723,7 @@ export function useInvestigation(apiBase: string) {
               ...prev.allExperimentFrames,
               [experimentId]: frames,
             };
-            const isCurrent = prev.currentExperiment?.experiment_id === experimentId;
+            const isCurrent = prev.currentExperiment?.experiment_id === experimentId || !prev.currentExperiment;
             return {
               ...prev,
               allExperimentFrames: updatedAll,

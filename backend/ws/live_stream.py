@@ -47,23 +47,32 @@ async def websocket_investigation_stream(websocket: WebSocket, investigation_id:
     seen_event_ids: set[str] = set()
     try:
         for event in subscription.events:
-            await websocket.send_json(event.to_dict())
+            if event.event_id in seen_event_ids:
+                continue
             seen_event_ids.add(event.event_id)
+            try:
+                await websocket.send_json(event.to_dict())
+            except Exception:
+                return
+
         if any(event.type.value in terminal_types for event in subscription.events):
             return
 
         while True:
             async_queue: Optional[asyncio.Queue[HarnessEvent]] = subscription.async_queue
             if async_queue is None:
-                raise RuntimeError("investigation subscription has no async queue")
+                break
             event: HarnessEvent = await async_queue.get()
             if event.event_id in seen_event_ids:
                 continue
             seen_event_ids.add(event.event_id)
-            await websocket.send_json(event.to_dict())
+            try:
+                await websocket.send_json(event.to_dict())
+            except Exception:
+                break
             if event.type.value in terminal_types:
                 return
-    except WebSocketDisconnect:
+    except Exception:
         pass
     finally:
         session.unsubscribe(subscription.queue)

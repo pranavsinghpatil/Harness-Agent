@@ -8,12 +8,13 @@ interface VehicleHUDProps {
 }
 
 export const VehicleHUD: React.FC<VehicleHUDProps> = ({ frame }) => {
-  const vel = frame?.vehicle_state.velocity ?? 0;
+  const vs = frame?.vehicle_state || (frame as unknown as { vehicle?: { velocity?: number; heading?: number } })?.vehicle;
+  const vel = vs?.velocity ?? 0;
   const clearance = frame?.min_clearance ?? 999;
-  const headingRad = frame?.vehicle_state.heading ?? 0;
+  const headingRad = vs?.heading ?? 0;
   const headingDeg = ((headingRad * 180) / Math.PI).toFixed(1);
-  const throttlePct = Math.round((frame?.actuator_command.throttle ?? 0) * 100);
-  const brakePct = Math.round((frame?.actuator_command.brake ?? 0) * 100);
+  const throttlePct = Math.round((frame?.actuator_command?.throttle ?? 0) * 100);
+  const brakePct = Math.round((frame?.actuator_command?.brake ?? 0) * 100);
 
   const isLowClearance = clearance < 1.0;
 
