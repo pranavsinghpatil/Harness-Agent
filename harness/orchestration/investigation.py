@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ class InvestigationEventSubscription:
 
     events: tuple[HarnessEvent, ...]
     queue: queue.Queue[HarnessEvent]
+    async_queue: Optional[asyncio.Queue[HarnessEvent]] = None
 
 
 class InvestigationSession:
@@ -60,6 +62,9 @@ class InvestigationSession:
         self._investigator: Optional[AutonomousInvestigator] = None
         self._events: list[HarnessEvent] = []
         self._subscribers: set[queue.Queue[HarnessEvent]] = set()
+        self._async_subscribers: dict[
+            queue.Queue[HarnessEvent], tuple[asyncio.Queue[HarnessEvent], asyncio.AbstractEventLoop]
+        ] = {}
         self._lock = threading.RLock()
         self._future: Optional[Future[None]] = None
         self._on_finished: Optional[Callable[[], None]] = None
@@ -89,10 +94,23 @@ class InvestigationSession:
         )
         with self._lock:
             self._events.append(event)
+        self._fan_out(event)
+        return event
+
+    def _fan_out(self, event: HarnessEvent) -> None:
+        """Deliver an event to synchronous queues and event-loop subscribers."""
+        with self._lock:
             subscribers: tuple[queue.Queue[HarnessEvent], ...] = tuple(self._subscribers)
+            async_subscribers: tuple[
+                tuple[asyncio.Queue[HarnessEvent], asyncio.AbstractEventLoop], ...
+            ] = tuple(self._async_subscribers.values())
         for subscriber in subscribers:
             subscriber.put(event)
-        return event
+        for async_queue, loop in async_subscribers:
+            try:
+                loop.call_soon_threadsafe(async_queue.put_nowait, event)
+            except RuntimeError:
+                continue
 
     def _on_investigator_event(self, event: HarnessEvent) -> None:
         """Forward investigator events into this session's ordered event log."""
@@ -103,9 +121,7 @@ class InvestigationSession:
                     self._result_snapshot = deepcopy(self._investigator.to_dict())
                 except Exception:
                     pass
-            subscribers: tuple[queue.Queue[HarnessEvent], ...] = tuple(self._subscribers)
-        for subscriber in subscribers:
-            subscriber.put(event)
+        self._fan_out(event)
 
     def start(
         self,
@@ -222,10 +238,23 @@ class InvestigationSession:
             self._subscribers.add(subscriber)
         return InvestigationEventSubscription(events=history, queue=subscriber)
 
+    def subscribe_async(self) -> InvestigationEventSubscription:
+        """Subscribe with an event-loop-native queue for WebSocket consumers."""
+        subscriber: queue.Queue[HarnessEvent] = queue.Queue()
+        async_queue: asyncio.Queue[HarnessEvent] = asyncio.Queue()
+        loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
+        with self._lock:
+            history: tuple[HarnessEvent, ...] = tuple(self._events)
+            self._async_subscribers[subscriber] = (async_queue, loop)
+        return InvestigationEventSubscription(
+            events=history, queue=subscriber, async_queue=async_queue
+        )
+
     def unsubscribe(self, subscriber: queue.Queue[HarnessEvent]) -> None:
         """Remove one streaming subscriber."""
         with self._lock:
             self._subscribers.discard(subscriber)
+            self._async_subscribers.pop(subscriber, None)
 
     def events(self) -> tuple[HarnessEvent, ...]:
         """Return an immutable event history snapshot."""
