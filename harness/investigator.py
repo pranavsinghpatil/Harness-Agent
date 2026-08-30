@@ -166,7 +166,14 @@ class AutonomousInvestigator:
                 },
             )
 
-        result: InvestigationRun = self._finalize_candidate(candidate, evaluation_id, outcome, run)
+        try:
+            result: InvestigationRun = self._finalize_candidate(
+                candidate, evaluation_id, outcome, run
+            )
+        except Exception:
+            if self.planner.ledger.get(candidate.experiment_id) is None:
+                self.planner.release(candidate.experiment_id)
+            raise
         self._runs.append(result)
         return result
 
