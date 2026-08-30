@@ -90,3 +90,35 @@ def test_harness_evaluation_result_metrics() -> None:
     assert d["baseline_violations_count"] == 3
     assert d["verification_violations_count"] == 0
     assert d["min_clearance_verified"] == 1.84
+
+
+def test_harness_run_telemetry_frames_serialization() -> None:
+    """Verify HarnessRun serializes full telemetry frames including dynamic obstacles and violations."""
+    from sandbox.telemetry.recorder import TelemetryFrame
+    frame = TelemetryFrame(
+        sim_time=1.5,
+        step=75,
+        vehicle_state={"x": 10.0, "y": 20.0, "velocity": 2.5, "heading": 0.5},
+        actuator_command={"throttle": 0.5, "brake": 0.0, "steering": 0.1, "emergency_stop": False},
+        min_clearance=0.45,
+        active_faults=["camera_latency"],
+        sensor_queue_depths={"camera": 3},
+        hardware_metrics={"cpu_utilization": 0.65, "temperature_celsius": 52.0, "is_throttled": False, "deadline_misses": 1},
+        dynamic_obstacles=[{"id": "dyn_obs_1", "x": 12.0, "y": 20.5, "velocity": 1.2, "heading": -1.5}],
+        new_violations=[{"rule_name": "MIN_CLEARANCE_BREACH", "description": "Clearance below 0.8m"}],
+    )
+    run = HarnessRun(
+        run_id="run_frames_test",
+        telemetry_frames=[frame],
+    )
+    d = run.to_dict(include_frames=True)
+    assert len(d["telemetry_frames"]) == 1
+    tf = d["telemetry_frames"][0]
+    assert tf["sim_time"] == 1.5
+    assert tf["step"] == 75
+    assert len(tf["dynamic_obstacles"]) == 1
+    assert tf["dynamic_obstacles"][0]["id"] == "dyn_obs_1"
+    assert len(tf["new_violations"]) == 1
+    assert tf["new_violations"][0]["rule_name"] == "MIN_CLEARANCE_BREACH"
+    assert tf["hardware_metrics"]["cpu_utilization"] == 0.65
+
