@@ -91,18 +91,17 @@ export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
     }
   }, [investigation.phase, investigation.status, investigation.investigationId]);
 
-  // Derive playback frames directly from store with fallback to active frames
-  const playbackFrames: TelemetryFrame[] =
-    (selectedExperimentId && investigation.allExperimentFrames[selectedExperimentId]?.length > 0)
-      ? investigation.allExperimentFrames[selectedExperimentId]
-      : (investigation.allExperimentFrames[investigation.currentExperiment?.experiment_id || ""]?.length > 0
-          ? investigation.allExperimentFrames[investigation.currentExperiment?.experiment_id || ""]
-          : (investigation.runs.length > 0 && investigation.allExperimentFrames[investigation.runs[investigation.runs.length - 1].experiment.experiment_id]?.length > 0
-              ? investigation.allExperimentFrames[investigation.runs[investigation.runs.length - 1].experiment.experiment_id]
-              : investigation.activeExperimentFrames));
+  // Derive playback frames directly from store without falling back to live frames when a historical experiment is selected
+  const playbackFrames: TelemetryFrame[] = selectedExperimentId
+    ? investigation.allExperimentFrames[selectedExperimentId] || []
+    : (investigation.allExperimentFrames[investigation.currentExperiment?.experiment_id || ""]?.length > 0
+        ? investigation.allExperimentFrames[investigation.currentExperiment?.experiment_id || ""]
+        : (investigation.runs.length > 0 && investigation.allExperimentFrames[investigation.runs[investigation.runs.length - 1].experiment.experiment_id]?.length > 0
+            ? investigation.allExperimentFrames[investigation.runs[investigation.runs.length - 1].experiment.experiment_id]
+            : investigation.activeExperimentFrames));
 
   // Handle Experiment Selection (LIVE vs Historical Replay)
-  const handleSelectExperiment = (expId: string | null) => {
+  const handleSelectExperiment = (expId: string | null): void => {
     setSelectedExperimentId(expId);
     if (expId) {
       setCurrentFrameIdx(0);

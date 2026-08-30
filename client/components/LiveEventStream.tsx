@@ -3,7 +3,10 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { HarnessEvent, EventSeverity } from "../types/simulation";
 
-interface LiveEventStreamProps {
+/**
+ * Props for the LiveEventStream virtualized event stream viewer.
+ */
+export interface LiveEventStreamProps {
   events: HarnessEvent[];
   maxDisplay?: number;
 }
@@ -125,7 +128,7 @@ function getPayloadString(payload: Record<string, unknown> | undefined): string 
   return cached;
 }
 
-const getSeverityBadge = (sev: EventSeverity) => {
+const getSeverityBadge = (sev: EventSeverity): string => {
   switch (sev) {
     case "CRITICAL":
     case "ERROR":
@@ -139,7 +142,7 @@ const getSeverityBadge = (sev: EventSeverity) => {
   }
 };
 
-const formatTime = (simTime: number, wallTime: number) => {
+const formatTime = (simTime: number, wallTime: number): string => {
   if (simTime > 0) {
     return `T+${simTime.toFixed(2)}s`;
   }
@@ -150,7 +153,10 @@ const formatTime = (simTime: number, wallTime: number) => {
   return "00:00";
 };
 
-interface EventRowProps {
+/**
+ * Props for the individual EventRow component.
+ */
+export interface EventRowProps {
   ev: HarnessEvent;
   isExpanded: boolean;
   onToggle: (id: string) => void;

@@ -3,6 +3,9 @@
 import React, { useState } from "react";
 import { InvestigationPhase, InvestigationSessionStatus } from "../types/simulation";
 
+/**
+ * Props for the application-wide top navigation header.
+ */
 export interface HeaderProps {
   apiBase: string;
   onApiBaseChange: (url: string) => void;
@@ -12,11 +15,15 @@ export interface HeaderProps {
   investigationId?: string | null;
   investigationPhase?: InvestigationPhase | string | null;
   investigationStatus?: InvestigationSessionStatus | string | null;
+  investigationOutcome?: string | null;
   streamConnectionStatus?: "IDLE" | "CONNECTING" | "OPEN" | "CLOSED" | "ERROR";
   debuggerStatusText?: string;
   debuggerStatusClass?: string;
 }
 
+/**
+ * Top navigation bar rendering system status, tab switching, and investigation phase badges.
+ */
 export const Header: React.FC<HeaderProps> = ({
   apiBase,
   onApiBaseChange,
@@ -26,6 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
   investigationId,
   investigationPhase,
   investigationStatus,
+  investigationOutcome,
   streamConnectionStatus = "IDLE",
   debuggerStatusText = "READY",
   debuggerStatusClass = "text-indigo-400",
@@ -33,13 +41,13 @@ export const Header: React.FC<HeaderProps> = ({
   const [showConfig, setShowConfig] = useState(false);
   const [tempUrl, setTempUrl] = useState(apiBase);
 
-  const handleSaveApi = () => {
+  const handleSaveApi = (): void => {
     onApiBaseChange(tempUrl.trim().replace(/\/+$/, ""));
     setShowConfig(false);
   };
 
-  const getPhaseBadge = () => {
-    if (!investigationPhase && !investigationStatus) return null;
+  const getPhaseBadge = (): React.ReactNode => {
+    if (!investigationPhase && !investigationStatus && !investigationOutcome) return null;
 
     if (investigationPhase === "AWAITING_APPROVAL") {
       return (
@@ -65,11 +73,43 @@ export const Header: React.FC<HeaderProps> = ({
         </span>
       );
     }
-    if (investigationStatus === "COMPLETED" || investigationPhase === "COMPLETED") {
+    if (investigationPhase === "PATCH_REJECTED" || investigationOutcome === "PATCH_REJECTED") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+          Patch Rejected
+        </span>
+      );
+    }
+    if (investigationOutcome === "PROVEN_SAFE") {
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-          Certified Safe
+          Proven Safe
+        </span>
+      );
+    }
+    if (investigationOutcome === "PROVEN_REPAIRED") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          Proven Repaired
+        </span>
+      );
+    }
+    if (investigationOutcome === "NOT_PROVEN_SAFE") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+          Not Proven Safe
+        </span>
+      );
+    }
+    if (investigationStatus === "COMPLETED" || investigationPhase === "COMPLETED") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+          Completed
         </span>
       );
     }

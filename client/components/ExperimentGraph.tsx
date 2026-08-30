@@ -7,20 +7,27 @@ import {
   ExperimentPhase,
 } from "../types/simulation";
 
-interface ExperimentGraphProps {
+/**
+ * Props for the ExperimentGraph component.
+ */
+export interface ExperimentGraphProps {
   runs: InvestigationRun[];
   decisionTraces?: DecisionTrace[];
   selectedExperimentId?: string | null;
   onSelectExperiment?: (experimentId: string) => void;
 }
 
+/**
+ * Renders the deterministic 4-phase experiment tree (Baseline -> Screen -> Boundary -> Interaction)
+ * and Bayesian falsification history.
+ */
 export const ExperimentGraph: React.FC<ExperimentGraphProps> = ({
   runs,
   decisionTraces = [],
   selectedExperimentId,
   onSelectExperiment,
 }) => {
-  const getPhaseBadge = (phase: ExperimentPhase | string) => {
+  const getPhaseBadge = (phase: ExperimentPhase | string): string => {
     switch (phase) {
       case "BASELINE":
         return "bg-blue-500/20 text-blue-300 border-blue-500/40";

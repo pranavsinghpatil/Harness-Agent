@@ -3,10 +3,16 @@
 import React from "react";
 import { CausalDiagnosticReport } from "../types/simulation";
 
-interface CausalDAGViewProps {
+/**
+ * Props for the CausalDAGView component.
+ */
+export interface CausalDAGViewProps {
   diagnosis: CausalDiagnosticReport | null;
 }
 
+/**
+ * Visualizes the causal Directed Acyclic Graph (DAG) explaining failure propagation from fault to invariant breach.
+ */
 export const CausalDAGView: React.FC<CausalDAGViewProps> = ({ diagnosis }) => {
   if (!diagnosis) {
     return (
@@ -21,8 +27,7 @@ export const CausalDAGView: React.FC<CausalDAGViewProps> = ({ diagnosis }) => {
   const nodes = diagnosis.causal_nodes || [];
   const links = diagnosis.causal_links || [];
 
-
-  const getNodeColor = (category: string) => {
+  const getNodeColor = (category: string): string => {
     switch (category) {
       case "HARDWARE_FAULT":
         return "border-amber-500/50 bg-amber-500/10 text-amber-300";
