@@ -142,7 +142,7 @@ TrueForge exposes 8 native tools for autonomous AI agent clients via `mcp_server
 
 ## 💻 Interactive Frontend Dashboard
 
-The platform includes a **Next.js 14 / Tailwind CSS** dashboard (`client/`) and a lightweight 2D canvas visualizer (`frontend/`):
+The platform includes a **Next.js 14 / Tailwind CSS** dashboard (`client/`):
 
 - **2D Live Simulation Canvas:** Real-time rendering of the 50m arena, vehicle bounding box, LiDAR raycasts, dynamic obstacles, and safety distance rings.
 - **Investigation Progress Matrix:** Live hypothesis confidence rankings, support/contradiction counters, and remaining experiment budget.

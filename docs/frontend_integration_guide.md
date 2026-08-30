@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary: What You Are Building
 
-As the frontend developer for **Harness-Agent**, you own the **Simulation Visualizer & Autonomous Agent Reliability Dashboard** (located in the `frontend/` directory). 
+As the frontend developer for **Harness-Agent**, you own the **Simulation Visualizer & Autonomous Agent Reliability Dashboard** (located in the `client/` directory). 
 
 Your app interacts with a Python FastAPI backend (`backend/`) that runs a **Software-in-the-Loop Deterministic Hardware Simulation Testbed**. Your frontend acts as the control panel and visualizer for:
 1. **Scenario & Hardware Selection**: Choosing simulation test environments and hardware preset constraints.
@@ -15,10 +15,11 @@ Your app interacts with a Python FastAPI backend (`backend/`) that runs a **Soft
 ## 2. Codebase Structure & File Mapping
 
 ```
-frontend/
-├── index.html     # Main dashboard layout (Tailwind CSS UI)
-├── styles.css     # Custom animations and scrollbar styling
-└── app.js         # Core application logic, API client, canvas renderer, playback loop
+client/
+├── app/layout.tsx # Root layout and theme providers
+├── app/page.tsx   # Main dashboard layout (Visualizer and Harness tabs)
+├── components/    # Modular React components (Canvas, HUDs, Controls, HarnessView)
+└── lib/           # API client, WebSocket stream client, and canvas renderer
 ```
 
 ### How `index.html` Connects to `app.js`:
@@ -92,8 +93,7 @@ graph TD
 From a frontend developer's perspective, the backend provides:
 - **REST APIs** for scenario management, simulation execution runs, telemetry querying, run replaying, hardware presets, and automated agent evaluation/patching loops.
 - **WebSocket Streaming** for real-time visualization of agent movement, sensor telemetry, and fault injection events.
-- **CORS Middleware** enabled globally (`allow_origins=["*"]`), permitting local development on Vite/React or static HTML/JS frontends.
-- **Static File Serving**: The backend automatically mounts the `frontend/` directory at the root path (`/`), allowing unified deployment.
+- **CORS Middleware** enabled globally (`allow_origins=["*"]`), permitting local development on Next.js/React frontends (`client/`).
 
 ---
 
