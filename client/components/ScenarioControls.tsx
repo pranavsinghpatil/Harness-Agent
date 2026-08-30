@@ -1,9 +1,12 @@
 "use client";
 
 import React from "react";
-import { ScenarioDefinition } from "../types/simulation";
+import { ScenarioDefinition, HardwarePreset } from "../types/simulation";
 
 interface ScenarioControlsProps {
+  presets: HardwarePreset[];
+  selectedPresetId: string;
+  onSelectPreset: (presetId: string) => void;
   scenarios: ScenarioDefinition[];
   selectedScenario: ScenarioDefinition | null;
   onSelectScenario: (scId: string) => void;
@@ -11,10 +14,12 @@ interface ScenarioControlsProps {
   onSeedChange: (seed: number) => void;
   maxSimTime: number;
   onMaxSimTimeChange: (time: number) => void;
+  onRunFullEvaluation: () => void;
   onRunScenario: () => void;
   onStartStreaming: () => void;
   onStopStreaming: () => void;
   onReplayRun: () => void;
+  isEvaluating: boolean;
   isSimulating: boolean;
   isStreaming: boolean;
   isVerifying: boolean;
@@ -22,6 +27,9 @@ interface ScenarioControlsProps {
 }
 
 export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
+  presets,
+  selectedPresetId,
+  onSelectPreset,
   scenarios,
   selectedScenario,
   onSelectScenario,
@@ -29,20 +37,84 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
   onSeedChange,
   maxSimTime,
   onMaxSimTimeChange,
+  onRunFullEvaluation,
   onRunScenario,
   onStartStreaming,
   onStopStreaming,
   onReplayRun,
+  isEvaluating,
   isSimulating,
   isStreaming,
   isVerifying,
   canReplay,
 }) => {
   const faults = selectedScenario?.fault_schedule ?? [];
+  const selectedPreset = presets.find((p) => p.id === selectedPresetId);
 
   return (
     <div className="space-y-5">
-      {/* Scenario Selector Card */}
+      {/* Target Hardware Board Preset Card */}
+      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-xl">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
+          <svg
+            className="w-4 h-4 text-indigo-400"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="2"
+              d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
+            />
+          </svg>
+          Target Edge Hardware Preset
+        </h2>
+
+        <label
+          htmlFor="preset-select"
+          className="block text-[11px] text-slate-400 mb-1 font-medium"
+        >
+          Select Virtual Edge Board
+        </label>
+        <select
+          id="preset-select"
+          value={selectedPresetId}
+          onChange={(e) => onSelectPreset(e.target.value)}
+          disabled={isStreaming || isSimulating || isEvaluating}
+          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 mb-2.5 disabled:opacity-50"
+        >
+          {presets.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name || p.id}
+            </option>
+          ))}
+        </select>
+
+        {selectedPreset && (
+          <div className="text-[11px] text-slate-400 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80 space-y-1 font-mono">
+            <div className="flex justify-between">
+              <span>Arch:</span>
+              <span className="text-indigo-300 font-semibold">{selectedPreset.architecture || "ARM"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>CPU / Throttle:</span>
+              <span className="text-slate-300">
+                {selectedPreset.cpu_cores || 4} cores @ {selectedPreset.thermal_throttle_temp_celsius ?? selectedPreset.thermal_limit_celsius ?? 85}°C
+              </span>
+            </div>
+            {selectedPreset.npu_tops !== undefined && selectedPreset.npu_tops > 0 && (
+              <div className="flex justify-between">
+                <span>NPU Acceleration:</span>
+                <span className="text-emerald-400">{selectedPreset.npu_tops} TOPS</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Scenario & Execution Controls Card */}
       <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-xl">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
           <svg
@@ -58,7 +130,7 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
               d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
             />
           </svg>
-          Scenario & Simulation Mode
+          Fault Scenario & Seed
         </h2>
 
         <label
@@ -71,7 +143,7 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
           id="scenario-select"
           value={selectedScenario?.id ?? ""}
           onChange={(e) => onSelectScenario(e.target.value)}
-          disabled={isStreaming || isSimulating}
+          disabled={isStreaming || isSimulating || isEvaluating}
           className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 mb-3 disabled:opacity-50"
         >
           {scenarios.map((sc) => (
@@ -81,7 +153,7 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
           ))}
         </select>
 
-        <div className="text-xs text-slate-400 bg-slate-950/60 p-3 rounded-lg border border-slate-800/80 mb-4 leading-relaxed min-h-[48px]">
+        <div className="text-xs text-slate-400 bg-slate-950/60 p-3 rounded-lg border border-slate-800/80 mb-4 leading-relaxed min-h-[44px]">
           {selectedScenario?.description ?? "No scenario description available."}
         </div>
 
@@ -89,7 +161,7 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
           <div>
             <label
               htmlFor="seed-input"
-              className="text-[11px] text-slate-400 block mb-1"
+              className="text-[11px] text-slate-400 block mb-1 font-medium"
             >
               RNG Seed
             </label>
@@ -98,14 +170,14 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
               type="number"
               value={seed}
               onChange={(e) => onSeedChange(parseInt(e.target.value, 10) || 0)}
-              disabled={isStreaming || isSimulating}
+              disabled={isStreaming || isSimulating || isEvaluating}
               className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
             />
           </div>
           <div>
             <label
               htmlFor="sim-time-input"
-              className="text-[11px] text-slate-400 block mb-1"
+              className="text-[11px] text-slate-400 block mb-1 font-medium"
             >
               Max Time (s)
             </label>
@@ -114,18 +186,57 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
               type="number"
               value={maxSimTime}
               onChange={(e) => onMaxSimTimeChange(parseFloat(e.target.value) || 1)}
-              disabled={isStreaming || isSimulating}
+              disabled={isStreaming || isSimulating || isEvaluating}
               className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
             />
           </div>
         </div>
 
         <div className="space-y-2.5">
-          {/* Primary Action: Real-time WebSocket Stream */}
+          {/* PRIMARY ONE-CLICK ACTION: Full Closed-Loop Evaluation */}
+          <button
+            onClick={onRunFullEvaluation}
+            disabled={isEvaluating || isSimulating || isStreaming || !selectedScenario}
+            className="w-full py-3 px-4 rounded-xl bg-linear-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:opacity-90 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+          >
+            {isEvaluating ? (
+              <>
+                <svg
+                  className="animate-spin -ml-1 mr-1.5 h-4 w-4 text-white"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8v8z"
+                  />
+                </svg>
+                Running Closed Loop (System 2)...
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4 text-cyan-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span>⚡ Run Full Closed-Loop Evaluation</span>
+              </>
+            )}
+          </button>
+
+          {/* SECONDARY ACTION: WebSocket Live Stream */}
           {isStreaming ? (
             <button
               onClick={onStopStreaming}
-              className="w-full py-2.5 px-4 rounded-lg bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 transition cursor-pointer animate-pulse"
+              className="w-full py-2 px-3 rounded-lg bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 transition cursor-pointer animate-pulse"
             >
               <span className="w-2 h-2 rounded-full bg-white animate-ping" />
               <span>Stop WebSocket Stream</span>
@@ -133,107 +244,57 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
           ) : (
             <button
               onClick={onStartStreaming}
-              disabled={isSimulating || !selectedScenario}
-              className="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:opacity-90 disabled:opacity-50 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+              disabled={isEvaluating || isSimulating || !selectedScenario}
+              className="w-full py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-900 disabled:opacity-40 text-slate-200 font-medium text-xs flex items-center justify-center gap-2 border border-slate-700 transition cursor-pointer"
             >
-              <svg className="w-4 h-4 text-cyan-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              <span>Stream Live (WebSocket)</span>
+              <span className="w-2 h-2 rounded-full bg-cyan-400" />
+              <span>Live Stream (WebSocket)</span>
             </button>
           )}
 
-          {/* Secondary Action: Fast Batch Run */}
-          <button
-            onClick={onRunScenario}
-            disabled={isStreaming || isSimulating || !selectedScenario}
-            className="w-full py-2 px-4 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-900 disabled:opacity-40 text-slate-300 font-medium text-xs flex items-center justify-center gap-2 border border-slate-700 transition cursor-pointer"
-          >
-            {isSimulating ? (
-              <>
-                <svg
-                  className="animate-spin -ml-1 mr-1 h-3.5 w-3.5 text-white"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8v8z"
-                  />
-                </svg>
-                Executing Batch Run...
-              </>
-            ) : (
-              <>
-                <svg className="w-3.5 h-3.5 text-slate-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path
-                    fillRule="evenodd"
-                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-                <span>Batch Simulation (REST API)</span>
-              </>
-            )}
-          </button>
+          {/* TERTIARY ACTIONS: Batch Run & Replay Check */}
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <button
+              onClick={onRunScenario}
+              disabled={isStreaming || isSimulating || isEvaluating || !selectedScenario}
+              className="py-1.5 px-2 rounded-lg bg-slate-950 hover:bg-slate-900 active:bg-slate-950 disabled:opacity-30 text-slate-400 hover:text-slate-200 font-medium text-[11px] flex items-center justify-center gap-1.5 border border-slate-800 transition cursor-pointer"
+            >
+              {isSimulating ? (
+                <>
+                  <svg className="animate-spin h-3 w-3 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  Simulating...
+                </>
+              ) : (
+                <span>Batch Physics Only</span>
+              )}
+            </button>
 
-          {/* Deterministic Replay Check */}
-          <button
-            onClick={onReplayRun}
-            disabled={!canReplay || isVerifying || isSimulating || isStreaming}
-            className="w-full py-2 px-4 rounded-lg bg-slate-950 hover:bg-slate-900 active:bg-slate-950 disabled:opacity-30 text-slate-400 hover:text-slate-200 font-medium text-[11px] flex items-center justify-center gap-2 border border-slate-800 transition cursor-pointer"
-          >
-            {isVerifying ? (
-              <>
-                <svg
-                  className="animate-spin -ml-1 mr-1 h-3.5 w-3.5 text-indigo-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8v8z"
-                  />
-                </svg>
-                Verifying Replay Bit-by-Bit...
-              </>
-            ) : (
-              <>
-                <svg
-                  className="w-3.5 h-3.5 text-emerald-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                  />
-                </svg>
-                <span>Deterministic Replay Check</span>
-              </>
-            )}
-          </button>
+            <button
+              onClick={onReplayRun}
+              disabled={!canReplay || isVerifying || isSimulating || isStreaming || isEvaluating}
+              className="py-1.5 px-2 rounded-lg bg-slate-950 hover:bg-slate-900 active:bg-slate-950 disabled:opacity-30 text-slate-400 hover:text-slate-200 font-medium text-[11px] flex items-center justify-center gap-1.5 border border-slate-800 transition cursor-pointer"
+            >
+              {isVerifying ? (
+                <>
+                  <svg className="animate-spin h-3 w-3 text-indigo-400" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  Replaying...
+                </>
+              ) : (
+                <>
+                  <svg className="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span>Replay Check</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -255,7 +316,7 @@ export const ScenarioControls: React.FC<ScenarioControlsProps> = ({
           </svg>
           Fault Injection Schedule
         </h2>
-        <div className="space-y-2 text-xs max-h-52 overflow-y-auto pr-1">
+        <div className="space-y-2 text-xs max-h-48 overflow-y-auto pr-1">
           {faults.length > 0 ? (
             faults.map((f, idx) => (
               <div

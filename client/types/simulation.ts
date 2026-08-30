@@ -296,3 +296,150 @@ export interface WSErrorMessage {
 }
 
 export type WSStreamMessage = WSFrameMessage | WSManifestMessage | WSErrorMessage;
+
+// ==========================================
+// System 1 & System 2 Autonomous Investigator Types
+// ==========================================
+export type ExperimentPhase = "BASELINE" | "SCREEN" | "BOUNDARY" | "INTERACTION";
+export type HypothesisStatus = "ACTIVE" | "SUPPORTED" | "REFUTED";
+export type InvestigationStatus = "COMPLETE" | "BUDGET_EXHAUSTED" | "PARTIAL" | "IN_PROGRESS";
+
+export interface PlannerDimension {
+  id: string;
+  baseline: number;
+  minimum: number;
+  maximum: number;
+  higher_is_worse: boolean;
+  unit: string;
+}
+
+export interface ExperimentCandidate {
+  experiment_id: string;
+  values: Record<string, number>;
+  phase: ExperimentPhase;
+  rationale: string;
+  parent_experiment_ids: string[];
+}
+
+export interface ExperimentOutcome {
+  passed: boolean;
+  violation_count: number;
+  min_clearance: number;
+  trace_hash: string;
+  details: {
+    run_id?: string;
+    status?: string;
+    controller_health?: string;
+    task_completed?: boolean;
+    execution_error?: string;
+    execution_stage?: string;
+    metrics?: Record<string, unknown>;
+  };
+}
+
+export interface EvidenceSignal {
+  name: string;
+  value: number;
+  unit: string;
+  sim_time: number;
+  frame_index: number;
+  step: number;
+  source: string;
+}
+
+export interface EvidenceLink {
+  event_id: string;
+  evaluation_id: string;
+  episode_id: string;
+  event_type: string;
+  source: string;
+  sim_time: number;
+  severity: string;
+  wall_time: number;
+  payload: Record<string, unknown>;
+}
+
+export interface EvidenceSnapshot {
+  run_id: string;
+  trace_hash: string;
+  signals: EvidenceSignal[];
+  event_links: EvidenceLink[];
+}
+
+export interface DecisionTrace {
+  experiment_id: string;
+  phase: ExperimentPhase;
+  action: string;
+  pre_execution_hypothesis_ids: string[];
+  post_observation_hypothesis_ids: string[];
+  refuted_hypothesis_ids: string[];
+  post_observation_leading_hypothesis_id: string | null;
+  information_gain_estimate: number;
+  outcome_classification: "PASS" | "SAFETY_VIOLATION" | "RUN_FAILURE" | "CONTROLLER_UNHEALTHY" | "TASK_INCOMPLETE" | "EXECUTION_ERROR" | "UNCLASSIFIED_FAILURE";
+  observation: string;
+  rationale: string;
+  next_experiment_id: string | null;
+  next_action: string;
+}
+
+export interface Hypothesis {
+  hypothesis_id: string;
+  statement: string;
+  variables: string[];
+  supporting_experiment_ids: string[];
+  contradicting_experiment_ids: string[];
+  confidence: number;
+  predicted_outcome: string;
+  status: HypothesisStatus;
+}
+
+export interface FalsificationPlan {
+  hypothesis_id: string;
+  values: Record<string, number>;
+  rationale: string;
+  expected_outcome: string;
+}
+
+export interface InvestigationRun {
+  evaluation_id: string;
+  experiment: ExperimentCandidate;
+  outcome: ExperimentOutcome;
+  evidence: EvidenceSnapshot | null;
+  decision_trace: DecisionTrace | null;
+}
+
+export interface InvestigationResult {
+  investigation_id: string;
+  objective: string;
+  scenario_id: string;
+  hardware_preset_id: string;
+  seed: number;
+  status: InvestigationStatus;
+  run_limit: number | null;
+  runs: InvestigationRun[];
+  planner: {
+    budget: number;
+    remaining_budget: number;
+    seed: number;
+    pending_experiment: ExperimentCandidate | null;
+    summary: {
+      total_experiments: number;
+      passed_experiments: number;
+      failed_experiments: number;
+      tested_dimensions: string[];
+      unproven_dimensions: string[];
+    };
+  };
+  evidence: {
+    total_experiments: number;
+    passed_experiments: number;
+    failed_experiments: number;
+    tested_dimensions: string[];
+    unproven_dimensions: string[];
+  };
+  hypotheses: {
+    hypotheses: Hypothesis[];
+  };
+  falsification_plans: FalsificationPlan[];
+  decision_trace: DecisionTrace[];
+}
