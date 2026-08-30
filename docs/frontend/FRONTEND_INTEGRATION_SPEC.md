@@ -245,6 +245,18 @@ export interface RunManifest {
 // 4. LIVE EVENT STREAM
 // ==========================================
 export type HarnessEventType =
+  | "INVESTIGATION_CREATED"
+  | "INVESTIGATION_STARTED"
+  | "EXPERIMENT_PLANNED"
+  | "EXPERIMENT_STARTED"
+  | "EXPERIMENT_COMPLETED"
+  | "EVIDENCE_CAPTURED"
+  | "HYPOTHESIS_UPDATED"
+  | "FALSIFICATION_PROPOSED"
+  | "DECISION_RECORDED"
+  | "NEXT_EXPERIMENT_SELECTED"
+  | "INVESTIGATION_COMPLETED"
+  | "INVESTIGATION_FAILED"
   | "SIMULATION_STARTED"
   | "SIMULATION_STEP"
   | "SIMULATION_TERMINATED"
@@ -278,6 +290,7 @@ export interface HarnessEvent {
   event_id: string;
   sim_time: number;
   wall_time: number; // UNIX timestamp
+  investigation_id: string;
   source: string; // e.g. "hardware.thermal", "transport.sensor.lidar", "safety.oracle"
   type: HarnessEventType;
   severity: EventSeverity;

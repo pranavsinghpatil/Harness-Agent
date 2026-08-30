@@ -234,7 +234,19 @@ def run_end_to_end_closed_loop(payload: CreateEvaluationPayload) -> Dict[str, An
 
 @router.post("/investigations", status_code=202)
 def run_autonomous_investigation(payload: InvestigationPayload) -> Dict[str, Any]:
-    """Create an investigation session and start bounded background execution."""
+    """Create an investigation session and start bounded background execution.
+
+    Args:
+        payload: Objective, scenario, hardware, seed, budget, and boundary-search
+            settings for the investigation.
+
+    Returns:
+        A `202 Accepted` session snapshot containing the investigation ID and
+        current lifecycle state. Execution continues in the background.
+
+    Raises:
+        HTTPException: 404 when the requested scenario is unknown.
+    """
     if not get_scenario(payload.scenario_id):
         raise HTTPException(status_code=404, detail=f"Scenario '{payload.scenario_id}' not found.")
 
@@ -249,13 +261,23 @@ def run_autonomous_investigation(payload: InvestigationPayload) -> Dict[str, Any
             max_boundary_steps=payload.max_boundary_steps,
         )
     )
-    session.start()
+    default_investigation_store.start(session)
     return session.snapshot()
 
 
 @router.get("/investigations/{investigation_id}")
 def get_investigation(investigation_id: str) -> Dict[str, Any]:
-    """Return the current state and completed result for one investigation session."""
+    """Return the current state and completed result for one investigation session.
+
+    Args:
+        investigation_id: Stable ID returned by the investigation creation endpoint.
+
+    Returns:
+        Current session metadata, compact state fields, and the latest result snapshot.
+
+    Raises:
+        HTTPException: 404 when the session is not retained by the process store.
+    """
     session = default_investigation_store.get(investigation_id)
     if session is None:
         raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
@@ -264,7 +286,17 @@ def get_investigation(investigation_id: str) -> Dict[str, Any]:
 
 @router.get("/investigations/{investigation_id}/events")
 def get_investigation_events(investigation_id: str) -> List[Dict[str, Any]]:
-    """Return the ordered canonical event history for polling clients."""
+    """Return the ordered canonical event history for polling clients.
+
+    Args:
+        investigation_id: Stable ID returned by the investigation creation endpoint.
+
+    Returns:
+        Serialized `HarnessEvent` objects in publication order.
+
+    Raises:
+        HTTPException: 404 when the session is not retained by the process store.
+    """
     session = default_investigation_store.get(investigation_id)
     if session is None:
         raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")

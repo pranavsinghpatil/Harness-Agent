@@ -83,8 +83,8 @@ class AutonomousInvestigator:
     ) -> None:
         self.config = config
         self.run_manager = run_manager or default_run_manager
-        self.investigation_id = investigation_id or f"investigation_{uuid.uuid4().hex[:8]}"
-        self.event_callback = event_callback
+        self.investigation_id: str = investigation_id or f"investigation_{uuid.uuid4()}"
+        self.event_callback: Optional[Callable[[HarnessEvent], None]] = event_callback
         self.planner = ExperimentPlanner(
             dimensions=[
                 PlannerDimension(
@@ -168,7 +168,27 @@ class AutonomousInvestigator:
             HarnessEventType.EXPERIMENT_STARTED,
             {"experiment": candidate.to_dict()},
         )
-        evaluation_id = ""
+        evaluation_id: str
+        run: Optional[HarnessRun]
+        outcome: ExperimentOutcome
+        evaluation_id, run, outcome = self._run_candidate(candidate)
+        try:
+            result: InvestigationRun = self._finalize_candidate(
+                candidate, evaluation_id, outcome, run
+            )
+        except Exception:
+            if self.planner.ledger.get(candidate.experiment_id) is None:
+                self.planner.release(candidate.experiment_id)
+            raise
+        self._runs.append(result)
+        self._emit_candidate_events(candidate, result, evaluation_id, run)
+        return result
+
+    def _run_candidate(
+        self, candidate: ExperimentCandidate
+    ) -> tuple[str, Optional[HarnessRun], ExperimentOutcome]:
+        """Create and execute one evaluation, retaining structured failures."""
+        evaluation_id: str = ""
         run: Optional[HarnessRun] = None
         stage: str = "fault override construction"
         try:
@@ -205,15 +225,28 @@ class AutonomousInvestigator:
                 },
             )
 
-        try:
-            result: InvestigationRun = self._finalize_candidate(
-                candidate, evaluation_id, outcome, run
-            )
-        except Exception:
-            if self.planner.ledger.get(candidate.experiment_id) is None:
-                self.planner.release(candidate.experiment_id)
-            raise
-        self._runs.append(result)
+        return evaluation_id, run, outcome
+
+    def _emit_candidate_events(
+        self,
+        candidate: ExperimentCandidate,
+        result: InvestigationRun,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
+        """Publish the post-execution lifecycle events for one finalized candidate."""
+        self._emit_experiment_completed(candidate, result, evaluation_id, run)
+        self._emit_evidence_captured(candidate, result, evaluation_id, run)
+        self._emit_hypothesis_updated(candidate, result, evaluation_id, run)
+        self._emit_decision_recorded(candidate, result, evaluation_id, run)
+
+    def _emit_experiment_completed(
+        self,
+        candidate: ExperimentCandidate,
+        result: InvestigationRun,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
         self._emit_event(
             HarnessEventType.EXPERIMENT_COMPLETED,
             {
@@ -224,6 +257,14 @@ class AutonomousInvestigator:
             evaluation_id=evaluation_id,
             run_id=run.run_id if run else "",
         )
+
+    def _emit_evidence_captured(
+        self,
+        candidate: ExperimentCandidate,
+        result: InvestigationRun,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
         if result.evidence is not None:
             self._emit_event(
                 HarnessEventType.EVIDENCE_CAPTURED,
@@ -231,6 +272,14 @@ class AutonomousInvestigator:
                 evaluation_id=evaluation_id,
                 run_id=run.run_id if run else "",
             )
+
+    def _emit_hypothesis_updated(
+        self,
+        candidate: ExperimentCandidate,
+        result: InvestigationRun,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
         self._emit_event(
             HarnessEventType.HYPOTHESIS_UPDATED,
             {
@@ -240,6 +289,14 @@ class AutonomousInvestigator:
             evaluation_id=evaluation_id,
             run_id=run.run_id if run else "",
         )
+
+    def _emit_decision_recorded(
+        self,
+        candidate: ExperimentCandidate,
+        result: InvestigationRun,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
         decision_trace = result.decision_trace
         if decision_trace is not None:
             self._emit_event(
@@ -248,7 +305,16 @@ class AutonomousInvestigator:
                 evaluation_id=evaluation_id,
                 run_id=run.run_id if run else "",
             )
-        if decision_trace is not None and decision_trace.next_experiment_id is not None:
+            self._emit_next_experiment_selected(candidate, decision_trace, evaluation_id, run)
+
+    def _emit_next_experiment_selected(
+        self,
+        candidate: ExperimentCandidate,
+        decision_trace: DecisionTrace,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
+        if decision_trace.next_experiment_id is not None:
             self._emit_event(
                 HarnessEventType.NEXT_EXPERIMENT_SELECTED,
                 {
@@ -259,7 +325,6 @@ class AutonomousInvestigator:
                 evaluation_id=evaluation_id,
                 run_id=run.run_id if run else "",
             )
-        return result
 
     def _finalize_candidate(
         self,

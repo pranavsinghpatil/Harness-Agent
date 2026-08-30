@@ -77,6 +77,10 @@ class RunManager:
         """
         return self._evaluations.get(evaluation_id)
 
+    def remove_evaluation(self, evaluation_id: str) -> bool:
+        """Release one retained evaluation when its owning session expires."""
+        return self._evaluations.pop(evaluation_id, None) is not None
+
     def list_evaluations(self) -> List[HarnessEvaluation]:
         """List all tracked evaluations.
 

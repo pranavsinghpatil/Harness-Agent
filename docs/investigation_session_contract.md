@@ -28,3 +28,33 @@ Every event carries the stable `investigation_id`, source, severity, event ID,
 and structured payload. The current store is process-local and thread-safe;
 the event and session contracts are deliberately independent of persistence
 technology so a database-backed repository can replace it later.
+
+## Session State
+
+`GET /api/harness/investigations/{investigation_id}` exposes both lifecycle
+metadata and a compact control-plane view for the dashboard:
+
+- `current_phase` and `current_experiment` identify the planner's pending work.
+- `completed_experiments` and `budget_remaining` expose progress and admission
+  to the configured experiment budget.
+- `active_hypothesis` and `leading_hypothesis` expose the current belief state.
+- `latest_decision` and `latest_failure` expose the newest decision trace and
+  failed experiment outcome without requiring clients to parse the full result.
+
+The snapshot is serialized from an immutable investigator result snapshot under
+the session lock. This prevents concurrent REST polling from observing a
+half-mutated investigator result while a worker publishes an event.
+
+## Execution Capacity and Retention
+
+The process-local store uses a bounded worker pool and bounded admission queue.
+When capacity is exhausted, a newly created session is explicitly marked
+`FAILED` with an overload error rather than creating an unbounded thread or
+silently dropping work. Completed and failed sessions are retained for a
+configurable TTL and LRU session bound. Eviction also releases evaluations
+owned by the session from `RunManager`.
+
+The WebSocket subscription snapshots history and registers its live queue under
+one lock. Terminal events are therefore replayed or delivered exactly once
+from the session event history, even when completion races with connection
+setup.
