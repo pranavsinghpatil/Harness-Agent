@@ -1,26 +1,21 @@
 """WebSocket endpoint for real-time simulation streaming to visualizer clients."""
 
 from __future__ import annotations
+
 import asyncio
-import json
-from queue import Empty
+from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from harness.orchestration.investigation import default_investigation_store
+from harness.orchestration.investigation import (
+    InvestigationEventSubscription,
+    default_investigation_store,
+)
+from harness.models.events import HarnessEvent
 from sandbox.api.environment import SandboxEnvironment
 from sandbox.api.tools import get_scenario, create_scenario
 from target_agents.reference_agent.agent import ReferenceAutonomousAgent
 
 
 router = APIRouter(tags=["websocket"])
-
-
-async def _next_investigation_event(subscription: object) -> object:
-    """Wait for one queued event without blocking the ASGI event loop."""
-    event_queue = getattr(subscription, "queue")
-    try:
-        return await asyncio.to_thread(event_queue.get, True, 30.0)
-    except Empty:
-        return None
 
 
 @router.websocket("/ws/investigations/{investigation_id}")
@@ -47,18 +42,24 @@ async def websocket_investigation_stream(websocket: WebSocket, investigation_id:
         return
 
     await websocket.accept()
-    subscription = session.subscribe()
+    subscription: InvestigationEventSubscription = session.subscribe_async()
     terminal_types = {"INVESTIGATION_COMPLETED", "INVESTIGATION_FAILED"}
+    seen_event_ids: set[str] = set()
     try:
         for event in subscription.events:
             await websocket.send_json(event.to_dict())
+            seen_event_ids.add(event.event_id)
         if any(event.type.value in terminal_types for event in subscription.events):
             return
 
         while True:
-            event = await _next_investigation_event(subscription)
-            if event is None:
+            async_queue: Optional[asyncio.Queue[HarnessEvent]] = subscription.async_queue
+            if async_queue is None:
+                raise RuntimeError("investigation subscription has no async queue")
+            event: HarnessEvent = await async_queue.get()
+            if event.event_id in seen_event_ids:
                 continue
+            seen_event_ids.add(event.event_id)
             await websocket.send_json(event.to_dict())
             if event.type.value in terminal_types:
                 return
