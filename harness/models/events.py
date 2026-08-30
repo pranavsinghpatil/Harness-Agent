@@ -10,6 +10,22 @@ import uuid
 
 class HarnessEventType(str, Enum):
     """Enumeration of all standard lifecycle and simulation event types."""
+    INVESTIGATION_CREATED = "INVESTIGATION_CREATED"
+    INVESTIGATION_STARTED = "INVESTIGATION_STARTED"
+    EXPERIMENT_PLANNED = "EXPERIMENT_PLANNED"
+    EXPERIMENT_STARTED = "EXPERIMENT_STARTED"
+    EXPERIMENT_COMPLETED = "EXPERIMENT_COMPLETED"
+    EVIDENCE_CAPTURED = "EVIDENCE_CAPTURED"
+    HYPOTHESIS_UPDATED = "HYPOTHESIS_UPDATED"
+    FALSIFICATION_PROPOSED = "FALSIFICATION_PROPOSED"
+    DECISION_RECORDED = "DECISION_RECORDED"
+    NEXT_EXPERIMENT_SELECTED = "NEXT_EXPERIMENT_SELECTED"
+    INVESTIGATION_COMPLETED = "INVESTIGATION_COMPLETED"
+    INVESTIGATION_FAILED = "INVESTIGATION_FAILED"
+    PERCEPTION_TASK_SCHEDULED = "PERCEPTION_TASK_SCHEDULED"
+    CONTROLLER_TASK_SCHEDULED = "CONTROLLER_TASK_SCHEDULED"
+    OBSERVATION_AVAILABLE = "OBSERVATION_AVAILABLE"
+    TASK_REJECTED = "TASK_REJECTED"
     SIMULATION_STARTED = "SIMULATION_STARTED"
     SIMULATION_STEP = "SIMULATION_STEP"
     SIMULATION_TERMINATED = "SIMULATION_TERMINATED"
@@ -20,10 +36,12 @@ class HarnessEventType(str, Enum):
     PACKET_DELIVERED = "PACKET_DELIVERED"
     PACKET_DROPPED = "PACKET_DROPPED"
     TASK_SCHEDULED = "TASK_SCHEDULED"
+    COMPUTE_STARTED = "COMPUTE_STARTED"
     TASK_COMPLETED = "TASK_COMPLETED"
     DEADLINE_MISSED = "DEADLINE_MISSED"
     THERMAL_THROTTLED = "THERMAL_THROTTLED"
     COMMAND_ISSUED = "COMMAND_ISSUED"
+    ACTUATOR_APPLIED = "ACTUATOR_APPLIED"
     CONTROLLER_EXCEPTION = "CONTROLLER_EXCEPTION"
     CONTROLLER_CRASHED = "CONTROLLER_CRASHED"
     INVARIANT_BREACHED = "INVARIANT_BREACHED"
@@ -31,8 +49,14 @@ class HarnessEventType(str, Enum):
     CLEARANCE_WARNING = "CLEARANCE_WARNING"
     DIAGNOSIS_COMPLETED = "DIAGNOSIS_COMPLETED"
     PATCH_GENERATED = "PATCH_GENERATED"
+    PATCH_APPROVAL_REQUESTED = "PATCH_APPROVAL_REQUESTED"
+    PATCH_APPROVED = "PATCH_APPROVED"
+    PATCH_REJECTED = "PATCH_REJECTED"
     VERIFICATION_PASSED = "VERIFICATION_PASSED"
     VERIFICATION_FAILED = "VERIFICATION_FAILED"
+    REGRESSION_STARTED = "REGRESSION_STARTED"
+    REGRESSION_COMPLETED = "REGRESSION_COMPLETED"
+    CONCLUSION_RECORDED = "CONCLUSION_RECORDED"
 
 
 class EventSeverity(str, Enum):
@@ -59,6 +83,8 @@ class HarnessEvent:
         payload: Event-specific metadata dictionary.
         event_id: Unique event identifier.
         wall_time: System wall clock UNIX timestamp in seconds.
+        investigation_id: Stable autonomous investigation identifier.
+        experiment_id: Planner experiment identifier when the event belongs to an experiment.
     """
     evaluation_id: str
     run_id: str
@@ -68,8 +94,10 @@ class HarnessEvent:
     type: HarnessEventType
     severity: EventSeverity = EventSeverity.INFO
     payload: Dict[str, Any] = field(default_factory=dict)
-    event_id: str = field(default_factory=lambda: f"evt_{uuid.uuid4().hex[:8]}")
+    event_id: str = field(default_factory=lambda: f"evt_{uuid.uuid4().hex}")
     wall_time: float = field(default_factory=time.time)
+    investigation_id: str = ""
+    experiment_id: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize event to a plain dictionary for JSON/WebSocket streaming.
@@ -82,6 +110,8 @@ class HarnessEvent:
             "run_id": self.run_id,
             "episode_id": self.episode_id,
             "event_id": self.event_id,
+            "investigation_id": self.investigation_id,
+            "experiment_id": self.experiment_id,
             "sim_time": round(self.sim_time, 4),
             "wall_time": self.wall_time,
             "source": self.source,

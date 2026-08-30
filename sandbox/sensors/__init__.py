@@ -7,6 +7,7 @@ from sandbox.sensors.imu import ImuSensor
 from sandbox.sensors.encoder import EncoderSensor
 from sandbox.sensors.position import PositionSensor
 from sandbox.sensors.camera import CameraSensor
+from sandbox.sensors.observation import ObservationState
 
 __all__ = [
     "SensorPacket",
@@ -16,4 +17,5 @@ __all__ = [
     "EncoderSensor",
     "PositionSensor",
     "CameraSensor",
+    "ObservationState",
 ]

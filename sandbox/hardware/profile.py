@@ -26,6 +26,9 @@ class ComputeTask:
     is_completed: bool = False
     is_deadline_missed: bool = False
     result_payload: Any = None
+    has_started: bool = False
+    started_at: Optional[float] = None
+    completed_at: Optional[float] = None
 
 
 @dataclass

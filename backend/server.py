@@ -15,7 +15,7 @@ app = FastAPI(
     description="Software-in-the-loop deterministic hardware testbed and reliability engineering harness.",
 )
 
-# Enable CORS for local dev visualizer (Vite / React)
+# Enable CORS for local dev visualizer (Vite / React / Next.js)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,9 +23,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-from pathlib import Path
-from fastapi.staticfiles import StaticFiles
 
 app.include_router(scenarios_router)
 app.include_router(telemetry_router)
@@ -37,9 +34,3 @@ app.include_router(ws_router)
 def health_check() -> dict[str, str]:
     """Basic health check endpoint returning server liveness status."""
     return {"status": "ok", "service": "harness-agent-sandbox"}
-
-
-frontend_dir = Path(__file__).parent.parent / "frontend"
-if frontend_dir.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
-

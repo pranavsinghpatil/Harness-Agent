@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 from harness.orchestration.run_manager import RunManager
-from harness.models.evaluation import EvaluationRequest
+from harness.models.evaluation import EvaluationRequest, HarnessRun, HarnessRunStatus
 from harness.diagnostics.analyzer import CausalTelemetryAnalyzer
-from harness.models.diagnostics import FailureTriggerType
+from harness.models.diagnostics import CausalDiagnosticReport, FailureTriggerType
 
 
 def test_causal_diagnosis_on_perturbed_showcase() -> None:
@@ -34,3 +34,13 @@ def test_causal_diagnosis_on_perturbed_showcase() -> None:
     assert len(report.causal_links) >= 2
     assert len(report.patch_recommendations) >= 2
     assert "Causal Failure Diagnostic Report" in report.markdown_summary
+
+
+def test_runtime_failure_is_not_reported_as_safe() -> None:
+    """Violation-free timeout runs remain unproven instead of becoming safe evidence."""
+    run: HarnessRun = HarnessRun(status=HarnessRunStatus.TIMEOUT, task_completed=False)
+
+    report: CausalDiagnosticReport = CausalTelemetryAnalyzer.analyze_run(run)
+
+    assert report.primary_root_cause == "Execution ended with run status TIMEOUT."
+    assert "Execution Safe" not in report.markdown_summary
