@@ -1,7 +1,7 @@
 """RunManager singleton orchestrating HarnessEvaluations, execution sessions, and event multiplexing."""
 
 from __future__ import annotations
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 import uuid
 import copy
 
@@ -89,11 +89,33 @@ class RunManager:
         """
         return list(self._evaluations.values())
 
+    @staticmethod
+    def _execution_context(evaluation: HarnessEvaluation) -> tuple[str, str]:
+        """Read validated investigation context from an evaluation request."""
+        metadata: Mapping[str, Any] = evaluation.request.metadata
+        investigation_value: object = metadata.get("investigation_id", "")
+        experiment_value: object = metadata.get("experiment_id", "")
+        investigation_id: str = investigation_value if isinstance(investigation_value, str) else ""
+        experiment_id: str = experiment_value if isinstance(experiment_value, str) else ""
+        return investigation_id, experiment_id
+
+    def _event_sink(
+        self, event_callback: Optional[Callable[[HarnessEvent], None]]
+    ) -> Callable[[HarnessEvent], None]:
+        """Combine the global event bus with an optional owning-session sink."""
+        def publish(event: HarnessEvent) -> None:
+            self._broadcast_event(event)
+            if event_callback is not None:
+                event_callback(event)
+
+        return publish
+
     def execute_baseline(
         self,
         evaluation_id: str,
         event_callback: Optional[Callable[[HarnessEvent], None]] = None,
         max_sim_time: Optional[float] = None,
+        run_id: Optional[str] = None,
     ) -> HarnessRun:
         """Execute the baseline simulation run for an evaluation.
 
@@ -102,6 +124,7 @@ class RunManager:
             event_callback: Optional per-execution sink for forwarding events to
                 an owning investigation session.
             max_sim_time: Optional upper bound for the simulation episode in seconds.
+            run_id: Optional preallocated run identifier for trace lifecycle events.
 
         Returns:
             Executed baseline HarnessRun.
@@ -113,18 +136,11 @@ class RunManager:
         if not evaluation:
             raise KeyError(f"Evaluation '{evaluation_id}' not found.")
 
-        run_id = f"run_{uuid.uuid4().hex[:8]}_base"
+        run_id = run_id or f"run_{uuid.uuid4().hex}_base"
         hardware = default_hardware_registry.get(evaluation.request.hardware_preset_id)
-        metadata = evaluation.request.metadata
-        investigation_id = metadata.get("investigation_id", "")
-        experiment_id = metadata.get("experiment_id", "")
-        investigation_id = investigation_id if isinstance(investigation_id, str) else ""
-        experiment_id = experiment_id if isinstance(experiment_id, str) else ""
-
-        def publish(event: HarnessEvent) -> None:
-            self._broadcast_event(event)
-            if event_callback is not None:
-                event_callback(event)
+        investigation_id: str
+        experiment_id: str
+        investigation_id, experiment_id = self._execution_context(evaluation)
 
         if evaluation.request.controller_code:
             target_agent = DynamicControllerLoader.load_from_code(
@@ -141,7 +157,7 @@ class RunManager:
             target_agent=target_agent,
             seed=evaluation.request.seed,
             chaos_fault_overrides=evaluation.request.chaos_fault_overrides,
-            event_callback=publish,
+            event_callback=self._event_sink(event_callback),
             investigation_id=investigation_id,
             experiment_id=experiment_id,
         )
@@ -178,16 +194,9 @@ class RunManager:
 
         run_id = f"run_{uuid.uuid4().hex[:8]}_verify"
         hardware = default_hardware_registry.get(evaluation.request.hardware_preset_id)
-        metadata = evaluation.request.metadata
-        investigation_id = metadata.get("investigation_id", "")
-        experiment_id = metadata.get("experiment_id", "")
-        investigation_id = investigation_id if isinstance(investigation_id, str) else ""
-        experiment_id = experiment_id if isinstance(experiment_id, str) else ""
-
-        def publish(event: HarnessEvent) -> None:
-            self._broadcast_event(event)
-            if event_callback is not None:
-                event_callback(event)
+        investigation_id: str
+        experiment_id: str
+        investigation_id, experiment_id = self._execution_context(evaluation)
 
         patched_agent = DynamicControllerLoader.load_from_code(patched_code, agent_id=agent_id)
 
@@ -199,25 +208,42 @@ class RunManager:
             target_agent=patched_agent,
             seed=evaluation.request.seed,
             chaos_fault_overrides=evaluation.request.chaos_fault_overrides,
-            event_callback=publish,
+            event_callback=self._event_sink(event_callback),
             investigation_id=investigation_id,
             experiment_id=experiment_id,
         )
 
-        verify_run = session.execute()
+        verify_run: HarnessRun = session.execute()
         evaluation.verification_run = verify_run
 
-        # Evaluate 3-Pillar Verification Matrix
-        baseline_run = evaluation.baseline_run
-        base_violations = len(baseline_run.violations) if baseline_run else 0
-        verify_violations = len(verify_run.violations)
-        base_clearance = baseline_run.metrics.get("min_clearance", 0.0) if baseline_run else 0.0
-        verify_clearance = verify_run.metrics.get("min_clearance", 0.0)
+        evaluation.final_result = self._build_verification_result(evaluation, verify_run)
+        return verify_run
 
-        safety_passed = (verify_violations == 0 and verify_run.status != HarnessRunStatus.SAFETY_VIOLATION)
-        health_passed = (verify_run.controller_health == ControllerHealth.HEALTHY and verify_run.status != HarnessRunStatus.CONTROLLER_CRASH)
-        behavior_passed = (verify_run.distance_traveled_m > 0.5 or verify_run.task_completed)
+    @staticmethod
+    def _build_verification_result(
+        evaluation: HarnessEvaluation, verify_run: HarnessRun
+    ) -> HarnessEvaluationResult:
+        """Build the three-pillar verification result from baseline and verify runs."""
+        baseline_run: Optional[HarnessRun] = evaluation.baseline_run
+        base_violations: int = len(baseline_run.violations) if baseline_run else 0
+        verify_violations: int = len(verify_run.violations)
+        base_clearance: float = (
+            baseline_run.metrics.get("min_clearance", 0.0) if baseline_run else 0.0
+        )
+        verify_clearance: float = verify_run.metrics.get("min_clearance", 0.0)
+        safety_passed: bool = (
+            verify_violations == 0
+            and verify_run.status != HarnessRunStatus.SAFETY_VIOLATION
+        )
+        health_passed: bool = (
+            verify_run.controller_health == ControllerHealth.HEALTHY
+            and verify_run.status != HarnessRunStatus.CONTROLLER_CRASH
+        )
+        behavior_passed: bool = (
+            verify_run.distance_traveled_m > 0.5 or verify_run.task_completed
+        )
 
+        verdict: VerificationVerdict
         if not safety_passed:
             verdict = VerificationVerdict.SAFETY_VIOLATION
         elif not health_passed:
@@ -226,10 +252,8 @@ class RunManager:
             verdict = VerificationVerdict.TASK_INCOMPLETE
         else:
             verdict = VerificationVerdict.VERIFIED_SAFE
-
-        is_safe = (verdict == VerificationVerdict.VERIFIED_SAFE)
-
-        evaluation.final_result = HarnessEvaluationResult(
+        is_safe: bool = verdict == VerificationVerdict.VERIFIED_SAFE
+        return HarnessEvaluationResult(
             evaluation_id=evaluation.evaluation_id,
             verdict=verdict,
             is_safe_under_test_conditions=is_safe,
@@ -249,7 +273,6 @@ class RunManager:
                 f"Min clearance improved from {base_clearance:.2f}m to {verify_clearance:.2f}m."
             ),
         )
-        return verify_run
 
 
 # Global RunManager singleton

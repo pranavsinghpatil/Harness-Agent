@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import inspect
 import math
 import uuid
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from harness.models.evaluation import (
     ControllerHealth,
@@ -123,22 +123,31 @@ class AutonomousInvestigator:
         severity: EventSeverity = EventSeverity.INFO,
         evaluation_id: str = "",
         run_id: str = "",
+        experiment_id: str = "",
     ) -> None:
         """Publish one investigation lifecycle event without affecting execution."""
         if self.event_callback is None:
             return
-        experiment_id = payload.get("experiment_id")
-        if not isinstance(experiment_id, str):
-            experiment = payload.get("experiment")
-            experiment_id = (
+        payload_experiment: object = payload.get("experiment_id")
+        resolved_experiment_id: str = (
+            experiment_id
+            if experiment_id
+            else payload_experiment
+            if isinstance(payload_experiment, str)
+            else ""
+        )
+        if not resolved_experiment_id:
+            experiment: object = payload.get("experiment")
+            experiment_value: object = (
                 experiment.get("experiment_id", "")
                 if isinstance(experiment, dict)
                 else ""
             )
-        if not isinstance(experiment_id, str):
-            experiment_id = ""
+            resolved_experiment_id = (
+                experiment_value if isinstance(experiment_value, str) else ""
+            )
         event = HarnessEvent(
-            evaluation_id=evaluation_id or self.investigation_id,
+            evaluation_id=evaluation_id,
             run_id=run_id,
             episode_id=run_id,
             sim_time=0.0,
@@ -147,7 +156,7 @@ class AutonomousInvestigator:
             severity=severity,
             payload=payload,
             investigation_id=self.investigation_id,
-            experiment_id=experiment_id,
+            experiment_id=resolved_experiment_id,
         )
         try:
             self.event_callback(event)
@@ -179,14 +188,6 @@ class AutonomousInvestigator:
 
     def _execute_candidate(self, candidate: ExperimentCandidate) -> InvestigationRun:
         """Compile and execute one candidate while preserving structured failures."""
-        self._emit_event(
-            HarnessEventType.EXPERIMENT_PLANNED,
-            {"experiment": candidate.to_dict()},
-        )
-        self._emit_event(
-            HarnessEventType.EXPERIMENT_STARTED,
-            {"experiment": candidate.to_dict()},
-        )
         evaluation_id: str
         run: Optional[HarnessRun]
         outcome: ExperimentOutcome
@@ -231,15 +232,34 @@ class AutonomousInvestigator:
             evaluation: HarnessEvaluation = self.run_manager.create_evaluation(request)
             evaluation_id = evaluation.evaluation_id
             self._evaluation_ids.add(evaluation_id)
+            run_id: str = f"run_{uuid.uuid4().hex}_base"
+            self._emit_event(
+                HarnessEventType.EXPERIMENT_PLANNED,
+                {"experiment": candidate.to_dict()},
+                evaluation_id=evaluation_id,
+                run_id=run_id,
+                experiment_id=candidate.experiment_id,
+            )
+            self._emit_event(
+                HarnessEventType.EXPERIMENT_STARTED,
+                {"experiment": candidate.to_dict()},
+                evaluation_id=evaluation_id,
+                run_id=run_id,
+                experiment_id=candidate.experiment_id,
+            )
             stage = "System 1 execution"
-            execute_baseline = self.run_manager.execute_baseline
+            execute_baseline: Callable[..., HarnessRun] = self.run_manager.execute_baseline
             execution_kwargs: dict[str, Any] = {}
             try:
-                parameters = inspect.signature(execute_baseline).parameters
+                parameters: Mapping[str, inspect.Parameter] = inspect.signature(
+                    execute_baseline
+                ).parameters
                 if "event_callback" in parameters:
                     execution_kwargs["event_callback"] = self.event_callback
                 if self.config.max_sim_time is not None and "max_sim_time" in parameters:
                     execution_kwargs["max_sim_time"] = self.config.max_sim_time
+                if "run_id" in parameters:
+                    execution_kwargs["run_id"] = run_id
             except (TypeError, ValueError):
                 pass
             run = execute_baseline(evaluation_id, **execution_kwargs)

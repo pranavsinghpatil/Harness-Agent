@@ -25,13 +25,15 @@ Session lifecycle events are represented by `HarnessEvent` and include:
 `INVESTIGATION_FAILED`.
 
 Every event carries the stable `investigation_id`, source, severity, unique
-`event_id`, and structured payload. Events belonging to an experiment also
+`event_id`, and structured payload. Experiment lifecycle and execution events
 carry first-class `experiment_id`, `evaluation_id`, `run_id`, and `episode_id`
-fields. The WebSocket stream includes the scheduler, perception, compute,
-observation, controller, command, and actuator events emitted by System 1, not
-only the System 2 lifecycle events. The current store is process-local and
-thread-safe; the event and session contracts are deliberately independent of
-persistence technology so a database-backed repository can replace it later.
+fields; events for a failed pre-evaluation setup may leave those execution
+identifiers empty. The WebSocket stream includes the scheduler, perception,
+compute, observation, controller, command, and actuator events emitted by
+System 1, not only the System 2 lifecycle events. The current store is
+process-local and thread-safe; the event and session contracts are deliberately
+independent of persistence technology so a database-backed repository can
+replace it later.
 
 ## Session State
 

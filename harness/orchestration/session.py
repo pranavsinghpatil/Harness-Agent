@@ -44,8 +44,8 @@ class SandboxSession:
         self.seed = seed if seed is not None else (scenario.seed if scenario else 42)
         self.chaos_fault_overrides = chaos_fault_overrides
         self.event_callback = event_callback
-        self.investigation_id = investigation_id
-        self.experiment_id = experiment_id
+        self.investigation_id: str = investigation_id
+        self.experiment_id: str = experiment_id
         self._events: List[HarnessEvent] = []
 
         sc_copy = scenario.model_copy(deep=True) if scenario else None
