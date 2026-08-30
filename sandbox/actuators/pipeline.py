@@ -32,6 +32,7 @@ class ActuatorPipeline:
 
         self._queue: list[QueuedCommand] = []
         self._current_applied_cmd = ActuatorCommand()
+        self.applied_commands_this_step: list[ActuatorCommand] = []
         self.cmd_counter: int = 0
 
         # Fault state injection hooks
@@ -65,8 +66,10 @@ class ActuatorPipeline:
 
     def step(self, current_sim_time: float) -> ActuatorCommand:
         """Applies due commands and transforms them with active fault perturbations."""
+        self.applied_commands_this_step = []
         while self._queue and self._queue[0].apply_time <= current_sim_time:
             self._current_applied_cmd = heapq.heappop(self._queue).cmd
+            self.applied_commands_this_step.append(self._current_applied_cmd)
 
         # Produce effective command factoring in mechanical perturbations
         effective_cmd = ActuatorCommand(
@@ -87,6 +90,7 @@ class ActuatorPipeline:
     def reset(self) -> None:
         self._queue.clear()
         self._current_applied_cmd = ActuatorCommand()
+        self.applied_commands_this_step.clear()
         self.cmd_counter = 0
         self.stuck_steering_angle = None
         self.brake_effectiveness_factor = 1.0

@@ -27,6 +27,7 @@ class VirtualEdgeScheduler:
         self.deadline_miss_events: list[dict[str, float | str]] = []
         self.started_tasks: list[ComputeTask] = []
         self.completed_tasks_this_step: list[ComputeTask] = []
+        self.deadline_misses_this_step: list[dict[str, float | str]] = []
         self.metrics = HardwareMetrics()
 
     def submit_task(self, task: ComputeTask) -> bool:
@@ -98,15 +99,15 @@ class VirtualEdgeScheduler:
                     if not current_task.is_deadline_missed:
                         current_task.is_deadline_missed = True
                         self.metrics.total_deadline_misses += 1
-                        self.deadline_miss_events.append(
-                            {
-                                "task_id": current_task.task_id,
-                                "name": current_task.name,
-                                "sim_time": sim_time,
-                                "deadline": current_task.deadline,
-                                "lateness": sim_time - current_task.deadline,
-                            }
-                        )
+                        event = {
+                            "task_id": current_task.task_id,
+                            "name": current_task.name,
+                            "sim_time": sim_time,
+                            "deadline": current_task.deadline,
+                            "lateness": sim_time - current_task.deadline,
+                        }
+                        self.deadline_miss_events.append(event)
+                        self.deadline_misses_this_step.append(event)
 
                 just_completed.append(current_task)
                 self.completed_tasks.append(current_task)
@@ -124,15 +125,15 @@ class VirtualEdgeScheduler:
             if sim_time > task.deadline and not task.is_deadline_missed:
                 task.is_deadline_missed = True
                 self.metrics.total_deadline_misses += 1
-                self.deadline_miss_events.append(
-                    {
-                        "task_id": task.task_id,
-                        "name": task.name,
-                        "sim_time": sim_time,
-                        "deadline": task.deadline,
-                        "lateness": sim_time - task.deadline,
-                    }
-                )
+                event = {
+                    "task_id": task.task_id,
+                    "name": task.name,
+                    "sim_time": sim_time,
+                    "deadline": task.deadline,
+                    "lateness": sim_time - task.deadline,
+                }
+                self.deadline_miss_events.append(event)
+                self.deadline_misses_this_step.append(event)
 
     def _update_metrics(self, consumed_compute: float, dt: float) -> None:
         """Updates internal telemetry metrics for queue depth, utilization, and temperature."""
@@ -152,11 +153,11 @@ class VirtualEdgeScheduler:
         Returns:
             list[ComputeTask]: List of tasks completed during this timestep slice.
         """
-        if dt <= 0:
-            return []
-
         self.started_tasks = []
         self.completed_tasks_this_step = []
+        self.deadline_misses_this_step = []
+        if dt <= 0:
+            return []
         self._update_thermal_state(dt)
         results: tuple[list[ComputeTask], float, float] = self._process_task_queue(sim_time, dt)
         just_completed: list[ComputeTask] = results[0]
@@ -175,6 +176,7 @@ class VirtualEdgeScheduler:
         self.deadline_miss_events.clear()
         self.started_tasks.clear()
         self.completed_tasks_this_step.clear()
+        self.deadline_misses_this_step.clear()
         self.profile.current_temperature = self.profile.thermal_ambient_temp
         self.profile.is_throttled = False
         self.profile.effective_cpu_ratio = 1.0

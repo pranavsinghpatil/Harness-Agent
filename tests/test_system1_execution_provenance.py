@@ -6,22 +6,23 @@ from typing import Any
 
 from sandbox.api.environment import SandboxEnvironment
 from sandbox.api.tools import get_scenario
+from scenarios.schema import ScenarioDefinition
 
 
 def test_controller_execution_is_timestamped_through_scheduler_and_actuator() -> None:
-    scenario = get_scenario("showcase_normal_baseline")
+    scenario: ScenarioDefinition | None = get_scenario("showcase_normal_baseline")
     assert scenario is not None
     events: list[tuple[str, str, str, dict[str, Any]]] = []
 
     def capture(source: str, event_type: str, severity: str, payload: dict[str, Any]) -> None:
         events.append((source, event_type, severity, payload))
 
-    environment = SandboxEnvironment(scenario=scenario, event_listener=capture)
+    environment: SandboxEnvironment = SandboxEnvironment(scenario=scenario, event_listener=capture)
     environment.reset()
     for _ in range(8):
         environment.step(0.01)
 
-    event_types = [event_type for _, event_type, _, _ in events]
+    event_types: list[str] = [event_type for _, event_type, _, _ in events]
     assert "SENSOR_SAMPLED" in event_types
     assert "PACKET_DELIVERED" in event_types
     assert "TASK_SCHEDULED" in event_types
@@ -30,20 +31,49 @@ def test_controller_execution_is_timestamped_through_scheduler_and_actuator() ->
     assert "COMMAND_ISSUED" in event_types
     assert "ACTUATOR_APPLIED" in event_types
 
-    command_payload = next(
+    command_payload: dict[str, Any] = next(
         payload for _, event_type, _, payload in events if event_type == "COMMAND_ISSUED"
     )
     assert command_payload["compute_started_at"] <= command_payload["compute_completed_at"]
     assert command_payload["compute_completed_at"] <= command_payload["input_timestamp"] + 0.01
 
-    scheduled_controller = next(
+    scheduled_controller: dict[str, Any] = next(
         payload
         for _, event_type, _, payload in events
         if event_type == "TASK_SCHEDULED" and payload["name"] == "controller"
     )
-    completed_controller = next(
+    completed_controller: dict[str, Any] = next(
         payload
         for _, event_type, _, payload in events
         if event_type == "TASK_COMPLETED" and payload["name"] == "controller"
     )
     assert scheduled_controller["timestamp"] <= completed_controller["completed_at"]
+
+
+def test_perception_is_not_available_before_compute_completion() -> None:
+    scenario: ScenarioDefinition | None = get_scenario("showcase_normal_baseline")
+    assert scenario is not None
+    events: list[tuple[str, str, str, dict[str, Any]]] = []
+
+    def capture(source: str, event_type: str, severity: str, payload: dict[str, Any]) -> None:
+        events.append((source, event_type, severity, payload))
+
+    environment: SandboxEnvironment = SandboxEnvironment(scenario=scenario, event_listener=capture)
+    environment.hardware.profile.cpu_capacity_units_per_sec = 1.0
+    environment.reset()
+    for _ in range(12):
+        environment.step(0.01)
+
+    completed: dict[str, dict[str, Any]] = {
+        payload["task_id"]: payload
+        for _, event_type, _, payload in events
+        if event_type == "TASK_COMPLETED" and payload["name"] == "perception"
+    }
+    available: list[dict[str, Any]] = [
+        payload for _, event_type, _, payload in events if event_type == "OBSERVATION_AVAILABLE"
+    ]
+    assert available
+    for observation in available:
+        task = completed[observation["observation_id"]]
+        assert observation["available_at"] == task["completed_at"]
+        assert observation["available_at"] >= task["input_timestamp"]

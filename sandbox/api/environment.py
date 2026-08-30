@@ -14,6 +14,8 @@ from sandbox.physics.dynamics import VehicleState, VehicleParams
 from sandbox.physics.engine import PhysicsEngine
 from sandbox.physics.collision import CollisionResult
 from sandbox.sensors.base import BaseSensor
+from sandbox.sensors.observation import ObservationState
+from sandbox.sensors.packet import SensorPacket
 from sandbox.sensors.lidar import LidarSensor
 from sandbox.sensors.imu import ImuSensor
 from sandbox.sensors.encoder import EncoderSensor
@@ -98,6 +100,9 @@ class SandboxEnvironment:
 
         self._prev_deadline_misses: int = 0
         self._prev_fault_ids: set[str] = set()
+        self._pending_perception: dict[str, list[SensorPacket]] = {}
+        self._pending_controller: dict[str, ComputeTask] = {}
+        self._observations: dict[str, ObservationState] = {}
 
         if scenario:
             self.load_scenario(scenario)
@@ -211,6 +216,9 @@ class SandboxEnvironment:
         self.telemetry.reset(self.run_id)
         self._prev_deadline_misses = 0
         self._prev_fault_ids = set()
+        self._pending_perception.clear()
+        self._pending_controller.clear()
+        self._observations.clear()
 
         if self.scenario:
             self.load_scenario(self.scenario)
@@ -268,6 +276,190 @@ class SandboxEnvironment:
                 "completed_at": task.completed_at,
             },
         )
+
+    def _emit_task_rejected(self, task: ComputeTask, sim_time: float) -> None:
+        """Report scheduler admission failure separately from deadline misses."""
+        self._emit(
+            "hardware.scheduler",
+            "TASK_REJECTED",
+            "WARNING",
+            {
+                "task_id": task.task_id,
+                "name": task.name,
+                "deadline": task.deadline,
+                "timestamp": sim_time,
+                "reason": "queue_capacity_exceeded",
+            },
+        )
+
+    def _schedule_compute_tasks(
+        self,
+        sim_time: float,
+        dt: float,
+        delivered_packets: list[SensorPacket],
+    ) -> None:
+        """Queue perception and controller work before the scheduler advances."""
+        if delivered_packets:
+            perception_task = ComputeTask(
+                task_id=f"compute_perception_{self.clock.step_count}",
+                name="perception",
+                compute_cost_units=0.1,
+                deadline=sim_time + dt,
+                priority=5,
+                input_timestamp=sim_time,
+                result_payload={"packet_count": len(delivered_packets)},
+            )
+            if self.hardware.submit_task(perception_task):
+                self._pending_perception[perception_task.task_id] = delivered_packets
+                self._emit_compute_task("TASK_SCHEDULED", perception_task, sim_time)
+                self._emit_compute_task("PERCEPTION_TASK_SCHEDULED", perception_task, sim_time)
+            else:
+                self._emit_task_rejected(perception_task, sim_time)
+
+        controller_task = ComputeTask(
+            task_id=f"compute_controller_{self.clock.step_count}",
+            name="controller",
+            compute_cost_units=0.1,
+            deadline=sim_time + dt,
+            priority=10,
+            input_timestamp=sim_time,
+        )
+        if self.hardware.submit_task(controller_task):
+            self._pending_controller[controller_task.task_id] = controller_task
+            self._emit_compute_task("TASK_SCHEDULED", controller_task, sim_time)
+            self._emit_compute_task("CONTROLLER_TASK_SCHEDULED", controller_task, sim_time)
+        else:
+            self._emit_task_rejected(controller_task, sim_time)
+
+    def _complete_observation(self, task: ComputeTask, sim_time: float) -> None:
+        """Release packets to the agent only after scheduler completion."""
+        packets = self._pending_perception.pop(task.task_id, [])
+        if not packets or task.is_deadline_missed:
+            return
+        available_at = task.completed_at if task.completed_at is not None else sim_time
+        self.target_agent.receive_sensor_packets(packets, available_at)
+        observation = ObservationState(
+            observation_id=task.task_id,
+            created_at=min(packet.sim_created_at for packet in packets),
+            available_at=available_at,
+            sensor_ids=tuple(sorted({packet.sensor_id for packet in packets})),
+            source_packet_ids=tuple(
+                f"{packet.sensor_id}:{packet.sequence_id}" for packet in packets
+            ),
+        )
+        self._observations[observation.observation_id] = observation
+        self._emit(
+            "agent.perception",
+            "OBSERVATION_AVAILABLE",
+            "INFO",
+            observation.to_dict(),
+        )
+
+    def _process_compute_tasks(self, sim_time: float, dt: float) -> list[ComputeTask]:
+        """Advance compute and release only completed perception results."""
+        completed_tasks = self.hardware.step(sim_time, dt)
+        for task in self.hardware.started_tasks:
+            self._emit_compute_task("COMPUTE_STARTED", task, task.started_at or sim_time)
+        for task in completed_tasks:
+            self._emit_compute_task("TASK_COMPLETED", task, task.completed_at or sim_time)
+            if task.name == "perception":
+                self._complete_observation(task, sim_time)
+            elif task.name == "controller":
+                self._pending_controller.pop(task.task_id, None)
+        return completed_tasks
+
+    def _emit_scheduler_status(self) -> None:
+        """Emit task-specific deadline events recorded by the scheduler."""
+        for miss in self.hardware.deadline_misses_this_step:
+            self._emit("hardware.scheduler", "DEADLINE_MISSED", "ERROR", dict(miss))
+        self._prev_deadline_misses = self.hardware.metrics.total_deadline_misses
+        if self.hardware.metrics.is_throttled:
+            self._emit(
+                "hardware.thermal",
+                "THERMAL_THROTTLED",
+                "WARNING",
+                {"temperature_celsius": self.hardware.metrics.temperature_celsius},
+            )
+
+    def _run_completed_controllers(
+        self,
+        sim_time: float,
+        completed_tasks: list[ComputeTask],
+    ) -> None:
+        """Run controller decisions only after their scheduled task completed."""
+        for task in completed_tasks:
+            if task.name != "controller" or task.is_deadline_missed:
+                continue
+            decision_time = task.completed_at if task.completed_at is not None else sim_time
+            agent_cmd = self.target_agent.step(decision_time)
+            observation_age = 0.0
+            latest_observation = max(
+                self._observations.values(),
+                key=lambda observation: observation.available_at,
+                default=None,
+            )
+            if latest_observation is not None:
+                observation_age = max(0.0, decision_time - latest_observation.available_at)
+                self._observations[latest_observation.observation_id] = ObservationState(
+                    observation_id=latest_observation.observation_id,
+                    created_at=latest_observation.created_at,
+                    available_at=latest_observation.available_at,
+                    sensor_ids=latest_observation.sensor_ids,
+                    source_packet_ids=latest_observation.source_packet_ids,
+                    age_at_decision=observation_age,
+                )
+            if hasattr(self.target_agent, "perception"):
+                observation_age = self.target_agent.perception.state.get_max_observation_age(decision_time)
+            submitted = self.actuators.submit_command(agent_cmd, decision_time)
+            self._emit(
+                "agent.controller",
+                "COMMAND_ISSUED",
+                "INFO",
+                {
+                    "accepted": submitted,
+                    "command_id": agent_cmd.command_id,
+                    "input_timestamp": task.input_timestamp,
+                    "compute_started_at": task.started_at,
+                    "compute_completed_at": task.completed_at,
+                    "observation_age_s": observation_age,
+                    "throttle": agent_cmd.throttle,
+                    "brake": agent_cmd.brake,
+                    "steering": agent_cmd.steering,
+                },
+            )
+
+    def _emit_applied_commands(self, sim_time: float) -> None:
+        """Emit one event for each command newly applied by the actuator queue."""
+        for command in self.actuators.applied_commands_this_step:
+            self._emit(
+                "actuator.pipeline",
+                "ACTUATOR_APPLIED",
+                "INFO",
+                {
+                    "command_id": command.command_id,
+                    "timestamp": sim_time,
+                    "sim_sent_time": command.sim_sent_time,
+                    "throttle": command.throttle,
+                    "brake": command.brake,
+                    "steering": command.steering,
+                },
+            )
+
+    def _update_faults(self, sim_time: float) -> list[str]:
+        """Apply scheduled faults and emit only newly activated fault IDs."""
+        active_faults = self.faults.update(
+            sim_time, self.sensors, self.transport, self.hardware, self.actuators
+        )
+        active_set = set(active_faults)
+        for fault_id in active_set - self._prev_fault_ids:
+            self._emit(
+                "faults.controller",
+                "FAULT_INJECTED",
+                "WARNING",
+                {"fault_id": fault_id, "sim_time": sim_time},
+            )
+        self._prev_fault_ids = active_set
+        return active_faults
 
     def _check_termination(self, sim_time: float, vehicle_state: VehicleState, collision_res: CollisionResult) -> None:
         """Evaluates goal completion, collision termination, or timeout lifecycle triggers."""
@@ -353,113 +545,19 @@ class SandboxEnvironment:
             TelemetryFrame: Recorded snapshot of the simulation step.
         """
         sim_time = self.clock.advance_by(dt)
-
-        active_faults = self.faults.update(sim_time, self.sensors, self.transport, self.hardware, self.actuators)
-        active_set = set(active_faults)
-        newly_active = active_set - self._prev_fault_ids
-        for f_id in newly_active:
-            self._emit("faults.controller", "FAULT_INJECTED", "WARNING", {"fault_id": f_id, "sim_time": sim_time})
-        self._prev_fault_ids = active_set
+        active_faults = self._update_faults(sim_time)
 
         applied_cmd = self.actuators.step(sim_time)
-        if applied_cmd.command_id > 0:
-            self._emit(
-                "actuator.pipeline",
-                "ACTUATOR_APPLIED",
-                "INFO",
-                {
-                    "command_id": applied_cmd.command_id,
-                    "timestamp": sim_time,
-                    "throttle": applied_cmd.throttle,
-                    "brake": applied_cmd.brake,
-                    "steering": applied_cmd.steering,
-                },
-            )
+        self._emit_applied_commands(sim_time)
         v_state, col_res = self.physics.step(
             applied_cmd.throttle, applied_cmd.brake, applied_cmd.steering, applied_cmd.emergency_stop, dt
         )
 
         delivered_packets = self._sample_and_deliver_sensors(sim_time, v_state)
-        if delivered_packets:
-            self.target_agent.receive_sensor_packets(delivered_packets, sim_time)
-            perception_task = ComputeTask(
-                task_id=f"compute_perception_{self.clock.step_count}",
-                name="perception",
-                compute_cost_units=0.1,
-                deadline=sim_time + dt,
-                priority=5,
-                input_timestamp=sim_time,
-                result_payload={"packet_count": len(delivered_packets)},
-            )
-            if self.hardware.submit_task(perception_task):
-                self._emit_compute_task("TASK_SCHEDULED", perception_task, sim_time)
-
-        controller_task = ComputeTask(
-            task_id=f"compute_controller_{self.clock.step_count}",
-            name="controller",
-            compute_cost_units=0.1,
-            deadline=sim_time + dt,
-            priority=10,
-            input_timestamp=sim_time,
-        )
-        controller_queued = self.hardware.submit_task(controller_task)
-        if controller_queued:
-            self._emit_compute_task("TASK_SCHEDULED", controller_task, sim_time)
-
-        self.hardware.step(sim_time, dt)
-        for task in self.hardware.started_tasks:
-            self._emit_compute_task("COMPUTE_STARTED", task, task.started_at or sim_time)
-        for task in self.hardware.completed_tasks_this_step:
-            self._emit_compute_task("TASK_COMPLETED", task, task.completed_at or sim_time)
-
-        # Emit hardware scheduler events
-        if self.hardware.metrics.is_throttled:
-            self._emit(
-                "hardware.thermal",
-                "THERMAL_THROTTLED",
-                "WARNING",
-                {"temperature_celsius": self.hardware.metrics.temperature_celsius},
-            )
-        if self.hardware.metrics.total_deadline_misses > self._prev_deadline_misses:
-            delta = self.hardware.metrics.total_deadline_misses - self._prev_deadline_misses
-            self._prev_deadline_misses = self.hardware.metrics.total_deadline_misses
-            self._emit(
-                "hardware.scheduler",
-                "DEADLINE_MISSED",
-                "ERROR",
-                {"misses_delta": delta, "total_misses": self.hardware.metrics.total_deadline_misses},
-            )
-
-        if controller_task.is_completed:
-            agent_cmd = self.target_agent.step(sim_time)
-            submitted = self.actuators.submit_command(agent_cmd, sim_time)
-            self._emit(
-                "agent.controller",
-                "COMMAND_ISSUED",
-                "INFO",
-                {
-                    "accepted": submitted,
-                    "command_id": agent_cmd.command_id,
-                    "input_timestamp": controller_task.input_timestamp,
-                    "compute_started_at": controller_task.started_at,
-                    "compute_completed_at": controller_task.completed_at,
-                    "throttle": agent_cmd.throttle,
-                    "brake": agent_cmd.brake,
-                    "steering": agent_cmd.steering,
-                },
-            )
-        else:
-            self._emit(
-                "agent.controller",
-                "DEADLINE_MISSED",
-                "ERROR",
-                {
-                    "task_id": controller_task.task_id,
-                    "deadline": controller_task.deadline,
-                    "timestamp": sim_time,
-                    "reason": "controller compute did not complete",
-                },
-            )
+        self._schedule_compute_tasks(sim_time, dt, delivered_packets)
+        completed_tasks = self._process_compute_tasks(sim_time, dt)
+        self._emit_scheduler_status()
+        self._run_completed_controllers(sim_time, completed_tasks)
 
         obs_age = 0.0
         if hasattr(self.target_agent, "perception"):
