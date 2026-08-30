@@ -368,6 +368,7 @@ export interface HarnessEvent {
   sim_time: number;
   wall_time: number;
   investigation_id: string;
+  experiment_id?: string;
   source: string;
   type: HarnessEventType;
   severity: EventSeverity;

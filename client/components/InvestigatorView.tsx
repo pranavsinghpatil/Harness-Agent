@@ -91,11 +91,15 @@ export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
     }
   }, [investigation.phase, investigation.status, investigation.investigationId]);
 
-  // Derive playback frames directly from store without redundant state
+  // Derive playback frames directly from store with fallback to active frames
   const playbackFrames: TelemetryFrame[] =
-    (selectedExperimentId && investigation.allExperimentFrames[selectedExperimentId])
+    (selectedExperimentId && investigation.allExperimentFrames[selectedExperimentId]?.length > 0)
       ? investigation.allExperimentFrames[selectedExperimentId]
-      : investigation.activeExperimentFrames;
+      : (investigation.allExperimentFrames[investigation.currentExperiment?.experiment_id || ""]?.length > 0
+          ? investigation.allExperimentFrames[investigation.currentExperiment?.experiment_id || ""]
+          : (investigation.runs.length > 0 && investigation.allExperimentFrames[investigation.runs[investigation.runs.length - 1].experiment.experiment_id]?.length > 0
+              ? investigation.allExperimentFrames[investigation.runs[investigation.runs.length - 1].experiment.experiment_id]
+              : investigation.activeExperimentFrames));
 
   // Handle Experiment Selection (LIVE vs Historical Replay)
   const handleSelectExperiment = (expId: string | null) => {
@@ -104,10 +108,7 @@ export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
       setCurrentFrameIdx(0);
       setIsPlaying(true);
       const run = investigation.runs.find((r) => r.experiment.experiment_id === expId);
-      if (
-        run?.evaluation_id &&
-        (!investigation.allExperimentFrames[expId] || investigation.allExperimentFrames[expId].length === 0)
-      ) {
+      if (run?.evaluation_id) {
         investigation.hydrateExperimentFrames(expId, run.evaluation_id);
       }
     } else {
@@ -192,8 +193,8 @@ export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
 
   const isLive = !selectedExperimentId;
   const effectiveFrameIdx = (isLive && !isPlaying && playbackFrames.length > 0)
-    ? playbackFrames.length - 1
-    : currentFrameIdx;
+    ? Math.max(0, playbackFrames.length - 1)
+    : Math.min(Math.max(0, playbackFrames.length - 1), Math.max(0, currentFrameIdx));
 
   const activeFrame: TelemetryFrame | null =
     playbackFrames[effectiveFrameIdx] ||
@@ -596,7 +597,7 @@ export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
                   }
                   activeFaults={activeFrame?.active_faults}
                   playbackFrames={playbackFrames}
-                  currentFrameIdx={currentFrameIdx}
+                  currentFrameIdx={effectiveFrameIdx}
                 />
               </div>
 
@@ -605,7 +606,7 @@ export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
                 <PlaybackControls
                   isPlaying={isPlaying}
                   onPlayPauseToggle={() => setIsPlaying(!isPlaying)}
-                  currentFrameIdx={currentFrameIdx}
+                  currentFrameIdx={effectiveFrameIdx}
                   totalFrames={playbackFrames.length}
                   onScrub={(idx: number) => {
                     setIsPlaying(false);
@@ -613,8 +614,8 @@ export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
                   }}
                   playbackSpeed={playbackSpeed}
                   onSpeedChange={(speed: number) => setPlaybackSpeed(speed)}
-                  currentTime={activeFrame?.sim_time || 0}
-                  totalDuration={playbackFrames[playbackFrames.length - 1]?.sim_time || 12}
+                  currentTime={activeFrame?.sim_time || (effectiveFrameIdx * 0.01)}
+                  totalDuration={playbackFrames[playbackFrames.length - 1]?.sim_time || Math.max(12, playbackFrames.length * 0.01)}
                 />
               )}
 
