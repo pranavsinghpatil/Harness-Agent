@@ -44,6 +44,12 @@ class InvestigationPayload(BaseModel):
     seed: int = Field(default=1337, description="Random seed for repeatable experiments")
     budget: int = Field(default=12, ge=1, le=100, description="Maximum number of experiments")
     max_boundary_steps: int = Field(default=3, ge=0, le=10, description="Maximum binary refinements per failed dimension")
+    max_sim_time: Optional[float] = Field(
+        default=None,
+        gt=0,
+        le=120,
+        description="Optional per-experiment simulation time bound in seconds",
+    )
 
     @field_validator("objective", mode="before")
     @classmethod
@@ -261,6 +267,7 @@ def run_autonomous_investigation(payload: InvestigationPayload) -> Dict[str, Any
                 seed=payload.seed,
                 budget=payload.budget,
                 max_boundary_steps=payload.max_boundary_steps,
+                max_sim_time=payload.max_sim_time,
             )
         )
     except RuntimeError as exc:

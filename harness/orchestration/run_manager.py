@@ -89,11 +89,19 @@ class RunManager:
         """
         return list(self._evaluations.values())
 
-    def execute_baseline(self, evaluation_id: str) -> HarnessRun:
+    def execute_baseline(
+        self,
+        evaluation_id: str,
+        event_callback: Optional[Callable[[HarnessEvent], None]] = None,
+        max_sim_time: Optional[float] = None,
+    ) -> HarnessRun:
         """Execute the baseline simulation run for an evaluation.
 
         Args:
             evaluation_id: Identifier of the target HarnessEvaluation.
+            event_callback: Optional per-execution sink for forwarding events to
+                an owning investigation session.
+            max_sim_time: Optional upper bound for the simulation episode in seconds.
 
         Returns:
             Executed baseline HarnessRun.
@@ -107,6 +115,16 @@ class RunManager:
 
         run_id = f"run_{uuid.uuid4().hex[:8]}_base"
         hardware = default_hardware_registry.get(evaluation.request.hardware_preset_id)
+        metadata = evaluation.request.metadata
+        investigation_id = metadata.get("investigation_id", "")
+        experiment_id = metadata.get("experiment_id", "")
+        investigation_id = investigation_id if isinstance(investigation_id, str) else ""
+        experiment_id = experiment_id if isinstance(experiment_id, str) else ""
+
+        def publish(event: HarnessEvent) -> None:
+            self._broadcast_event(event)
+            if event_callback is not None:
+                event_callback(event)
 
         if evaluation.request.controller_code:
             target_agent = DynamicControllerLoader.load_from_code(
@@ -123,15 +141,21 @@ class RunManager:
             target_agent=target_agent,
             seed=evaluation.request.seed,
             chaos_fault_overrides=evaluation.request.chaos_fault_overrides,
-            event_callback=self._broadcast_event,
+            event_callback=publish,
+            investigation_id=investigation_id,
+            experiment_id=experiment_id,
         )
 
-        run_result = session.execute()
+        run_result = session.execute(max_sim_time=max_sim_time)
         evaluation.baseline_run = run_result
         return run_result
 
     def execute_verification(
-        self, evaluation_id: str, patched_code: str, agent_id: str = "verified_target"
+        self,
+        evaluation_id: str,
+        patched_code: str,
+        agent_id: str = "verified_target",
+        event_callback: Optional[Callable[[HarnessEvent], None]] = None,
     ) -> HarnessRun:
         """Execute the post-patch verification run on the identical seed and fault schedule.
 
@@ -139,6 +163,8 @@ class RunManager:
             evaluation_id: Identifier of the target HarnessEvaluation.
             patched_code: Python source code of the patched hardened controller.
             agent_id: Assigned agent identifier.
+            event_callback: Optional per-execution sink for forwarding events to
+                an owning investigation session.
 
         Returns:
             Executed verification HarnessRun.
@@ -152,6 +178,16 @@ class RunManager:
 
         run_id = f"run_{uuid.uuid4().hex[:8]}_verify"
         hardware = default_hardware_registry.get(evaluation.request.hardware_preset_id)
+        metadata = evaluation.request.metadata
+        investigation_id = metadata.get("investigation_id", "")
+        experiment_id = metadata.get("experiment_id", "")
+        investigation_id = investigation_id if isinstance(investigation_id, str) else ""
+        experiment_id = experiment_id if isinstance(experiment_id, str) else ""
+
+        def publish(event: HarnessEvent) -> None:
+            self._broadcast_event(event)
+            if event_callback is not None:
+                event_callback(event)
 
         patched_agent = DynamicControllerLoader.load_from_code(patched_code, agent_id=agent_id)
 
@@ -163,7 +199,9 @@ class RunManager:
             target_agent=patched_agent,
             seed=evaluation.request.seed,
             chaos_fault_overrides=evaluation.request.chaos_fault_overrides,
-            event_callback=self._broadcast_event,
+            event_callback=publish,
+            investigation_id=investigation_id,
+            experiment_id=experiment_id,
         )
 
         verify_run = session.execute()

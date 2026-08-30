@@ -251,6 +251,7 @@ class InvestigationSession:
             "hardware_preset_id": self.config.hardware_preset_id,
             "seed": self.config.seed,
             "budget": self.config.budget,
+            "max_sim_time": self.config.max_sim_time,
             "created_at": created_at,
             "started_at": started_at,
             "finished_at": finished_at,

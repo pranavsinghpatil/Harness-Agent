@@ -33,6 +33,8 @@ class SandboxSession:
         seed: Optional[int] = None,
         chaos_fault_overrides: Optional[List[Dict[str, Any]]] = None,
         event_callback: Optional[Callable[[HarnessEvent], None]] = None,
+        investigation_id: str = "",
+        experiment_id: str = "",
     ) -> None:
         self.evaluation_id = evaluation_id
         self.run_id = run_id
@@ -42,6 +44,8 @@ class SandboxSession:
         self.seed = seed if seed is not None else (scenario.seed if scenario else 42)
         self.chaos_fault_overrides = chaos_fault_overrides
         self.event_callback = event_callback
+        self.investigation_id = investigation_id
+        self.experiment_id = experiment_id
         self._events: List[HarnessEvent] = []
 
         sc_copy = scenario.model_copy(deep=True) if scenario else None
@@ -196,6 +200,8 @@ class SandboxSession:
             type=event_type,
             severity=severity,
             payload={"message": message, **payload},
+            investigation_id=self.investigation_id,
+            experiment_id=self.experiment_id,
         )
         self._events.append(evt)
         if self.event_callback:

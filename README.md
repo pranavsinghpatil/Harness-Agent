@@ -156,6 +156,10 @@ The HTTP investigation endpoint is asynchronous: `POST /api/harness/investigatio
 returns `202 Accepted` with an `investigation_id`. Read the current session from
 `GET /api/harness/investigations/{investigation_id}`, inspect its ordered event
 history at `/events`, or subscribe to
-`WS /ws/investigations/{investigation_id}` for replay plus live lifecycle events.
-This gives the frontend a stable session contract while System 2 continues
-executing deterministic System 1 experiments in the background.
+`WS /ws/investigations/{investigation_id}` for replay plus live lifecycle and
+System 1 execution events. Every streamed event includes an `event_id` and
+stable investigation context; experiment execution events also expose
+`experiment_id`, `evaluation_id`, `run_id`, and `episode_id` for direct
+evidence tracing. This gives the frontend a stable session contract while
+System 2 continues executing deterministic System 1 experiments in the
+background.

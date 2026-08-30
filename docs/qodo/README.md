@@ -68,3 +68,6 @@ graph LR
    - **Fixed:** Implemented with clear unit test coverage and docstring compliance.
    - **Deferred / Justified:** Documented in `remediation_plan.md` with a clear engineering rationale.
 3. **Verification First:** Never push remediation commits without passing the full automated test suite: `pytest tests/ -v`.
+
+The final backend freeze gate is recorded in
+[`backend_freeze_contract.md`](./backend_freeze_contract.md).

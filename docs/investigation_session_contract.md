@@ -24,10 +24,14 @@ Session lifecycle events are represented by `HarnessEvent` and include:
 `NEXT_EXPERIMENT_SELECTED`, `INVESTIGATION_COMPLETED`, and
 `INVESTIGATION_FAILED`.
 
-Every event carries the stable `investigation_id`, source, severity, event ID,
-and structured payload. The current store is process-local and thread-safe;
-the event and session contracts are deliberately independent of persistence
-technology so a database-backed repository can replace it later.
+Every event carries the stable `investigation_id`, source, severity, unique
+`event_id`, and structured payload. Events belonging to an experiment also
+carry first-class `experiment_id`, `evaluation_id`, `run_id`, and `episode_id`
+fields. The WebSocket stream includes the scheduler, perception, compute,
+observation, controller, command, and actuator events emitted by System 1, not
+only the System 2 lifecycle events. The current store is process-local and
+thread-safe; the event and session contracts are deliberately independent of
+persistence technology so a database-backed repository can replace it later.
 
 ## Session State
 
@@ -62,3 +66,7 @@ The WebSocket subscription snapshots history and registers its live queue under
 one lock. Terminal events are therefore replayed or delivered exactly once
 from the session event history, even when completion races with connection
 setup.
+
+Clients may provide `max_sim_time` in the creation request to bound each
+experiment's simulation duration in seconds. The default remains the duration
+declared by the selected scenario.

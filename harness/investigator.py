@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import inspect
+import math
 import uuid
 from typing import Any, Callable, Optional
 
@@ -39,6 +41,7 @@ class InvestigatorConfig:
     seed: int = 1337
     budget: int = 12
     max_boundary_steps: int = 3
+    max_sim_time: Optional[float] = None
     perturbation_space: PerturbationSpace = field(default_factory=default_perturbation_space)
 
     def __post_init__(self) -> None:
@@ -48,6 +51,10 @@ class InvestigatorConfig:
             raise ValueError("investigation budget must be at least 1")
         if self.max_boundary_steps < 0:
             raise ValueError("max_boundary_steps must not be negative")
+        if self.max_sim_time is not None and (
+            not math.isfinite(self.max_sim_time) or self.max_sim_time <= 0
+        ):
+            raise ValueError("max_sim_time must be finite and positive")
 
 
 @dataclass(frozen=True)
@@ -120,6 +127,16 @@ class AutonomousInvestigator:
         """Publish one investigation lifecycle event without affecting execution."""
         if self.event_callback is None:
             return
+        experiment_id = payload.get("experiment_id")
+        if not isinstance(experiment_id, str):
+            experiment = payload.get("experiment")
+            experiment_id = (
+                experiment.get("experiment_id", "")
+                if isinstance(experiment, dict)
+                else ""
+            )
+        if not isinstance(experiment_id, str):
+            experiment_id = ""
         event = HarnessEvent(
             evaluation_id=evaluation_id or self.investigation_id,
             run_id=run_id,
@@ -130,6 +147,7 @@ class AutonomousInvestigator:
             severity=severity,
             payload=payload,
             investigation_id=self.investigation_id,
+            experiment_id=experiment_id,
         )
         try:
             self.event_callback(event)
@@ -214,7 +232,17 @@ class AutonomousInvestigator:
             evaluation_id = evaluation.evaluation_id
             self._evaluation_ids.add(evaluation_id)
             stage = "System 1 execution"
-            run = self.run_manager.execute_baseline(evaluation_id)
+            execute_baseline = self.run_manager.execute_baseline
+            execution_kwargs: dict[str, Any] = {}
+            try:
+                parameters = inspect.signature(execute_baseline).parameters
+                if "event_callback" in parameters:
+                    execution_kwargs["event_callback"] = self.event_callback
+                if self.config.max_sim_time is not None and "max_sim_time" in parameters:
+                    execution_kwargs["max_sim_time"] = self.config.max_sim_time
+            except (TypeError, ValueError):
+                pass
+            run = execute_baseline(evaluation_id, **execution_kwargs)
             outcome: ExperimentOutcome = self._to_outcome(run)
         except Exception as exc:
             outcome = ExperimentOutcome(
