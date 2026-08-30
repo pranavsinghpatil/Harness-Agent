@@ -11,8 +11,7 @@
 
 > **WeMakeDevs TrueForge Hackathon Submission**  
 > **Live Repository:** [https://github.com/pranavsinghpatil/Harness-Agent](https://github.com/pranavsinghpatil/Harness-Agent)  
-> **Demo Video (3 Minutes):** [Watch on YouTube](https://youtu.be/trueforge-harness-demo)  
-> **Hackathon Article / Blog Post:** [Read on Dev.to / Hashnode](https://dev.to/pranavsinghpatil/building-trueforge-autonomous-agent-reliability-harness-for-robotics-and-edge-ai)  
+> **Hackathon Article / Blog Post:** [Read on X](https://x.com/pranavenv/status/2094134768724316191?s=20)  
 
 ---
 
