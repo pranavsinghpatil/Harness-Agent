@@ -54,6 +54,24 @@ def test_controller_execution_is_timestamped_through_scheduler_and_actuator() ->
     assert scheduled_controller["timestamp"] <= completed_controller["completed_at"]
 
 
+def test_missing_observation_reports_absent_age() -> None:
+    scenario: ScenarioDefinition | None = get_scenario("showcase_normal_baseline")
+    assert scenario is not None
+    events: list[tuple[str, str, str, dict[str, Any]]] = []
+
+    def capture(source: str, event_type: str, severity: str, payload: dict[str, Any]) -> None:
+        events.append((source, event_type, severity, payload))
+
+    environment: SandboxEnvironment = SandboxEnvironment(scenario=scenario, event_listener=capture)
+    environment.reset()
+    environment.step(0.01)
+    first_cmd: dict[str, Any] = next(
+        payload for _, event_type, _, payload in events if event_type == "COMMAND_ISSUED"
+    )
+    assert first_cmd["observation_id"] is None
+    assert first_cmd["observation_age_s"] is None
+
+
 def test_perception_is_not_available_before_compute_completion() -> None:
     scenario: ScenarioDefinition | None = get_scenario("showcase_normal_baseline")
     assert scenario is not None

@@ -341,7 +341,7 @@ class SandboxEnvironment:
         valid_packets: list[SensorPacket] = [p for p in packets if getattr(p, "validity", True)]
         if not valid_packets:
             return
-        created_at: float = min(packet.sim_created_at for packet in valid_packets)
+        created_at: float = min(packet.measurement_timestamp for packet in valid_packets)
         observation: ObservationState = ObservationState(
             observation_id=task.task_id,
             created_at=created_at,
@@ -359,9 +359,53 @@ class SandboxEnvironment:
             observation.to_dict(),
         )
 
+    def _run_controller_decision(self, task: ComputeTask, sim_time: float) -> None:
+        """Run one controller decision whose compute task completed on time."""
+        decision_time: float = task.completed_at if task.completed_at is not None else sim_time
+        agent_cmd: ActuatorCommand = self.target_agent.step(decision_time)
+        available_observations: list[ObservationState] = [
+            obs for obs in self._observations.values() if obs.available_at <= decision_time
+        ]
+        latest_observation: Optional[ObservationState] = max(
+            available_observations,
+            key=lambda observation: observation.available_at,
+            default=None,
+        )
+        observation_age: Optional[float] = None
+        if latest_observation is not None:
+            observation_age = max(0.0, decision_time - latest_observation.created_at)
+            self._observations[latest_observation.observation_id] = ObservationState(
+                observation_id=latest_observation.observation_id,
+                created_at=latest_observation.created_at,
+                available_at=latest_observation.available_at,
+                sensor_ids=latest_observation.sensor_ids,
+                source_packet_ids=latest_observation.source_packet_ids,
+                age_at_decision=observation_age,
+            )
+        submitted: bool = self.actuators.submit_command(agent_cmd, decision_time)
+        self._emit(
+            "agent.controller",
+            "COMMAND_ISSUED",
+            "INFO",
+            {
+                "accepted": submitted,
+                "command_id": agent_cmd.command_id,
+                "input_timestamp": task.input_timestamp,
+                "compute_started_at": task.started_at,
+                "compute_completed_at": task.completed_at,
+                "observation_age_s": observation_age,
+                "observation_id": (
+                    latest_observation.observation_id if latest_observation is not None else None
+                ),
+                "throttle": agent_cmd.throttle,
+                "brake": agent_cmd.brake,
+                "steering": agent_cmd.steering,
+            },
+        )
+
     def _process_compute_tasks(self, sim_time: float, dt: float) -> list[ComputeTask]:
-        """Advance compute and release only completed perception results."""
-        completed_tasks = self.hardware.step(sim_time, dt)
+        """Advance compute and process completed tasks in completion order."""
+        completed_tasks: list[ComputeTask] = self.hardware.step(sim_time, dt)
         for task in self.hardware.started_tasks:
             self._emit_compute_task("COMPUTE_STARTED", task, task.started_at or sim_time)
         for task in completed_tasks:
@@ -370,6 +414,8 @@ class SandboxEnvironment:
                 self._complete_observation(task, sim_time)
             elif task.name == "controller":
                 self._pending_controller.pop(task.task_id, None)
+                if not task.is_deadline_missed:
+                    self._run_controller_decision(task, sim_time)
         return completed_tasks
 
     def _emit_scheduler_status(self) -> None:
@@ -383,54 +429,6 @@ class SandboxEnvironment:
                 "THERMAL_THROTTLED",
                 "WARNING",
                 {"temperature_celsius": self.hardware.metrics.temperature_celsius},
-            )
-
-    def _run_completed_controllers(
-        self,
-        sim_time: float,
-        completed_tasks: list[ComputeTask],
-    ) -> None:
-        """Run controller decisions only after their scheduled task completed."""
-        for task in completed_tasks:
-            if task.name != "controller" or task.is_deadline_missed:
-                continue
-            decision_time: float = task.completed_at if task.completed_at is not None else sim_time
-            agent_cmd: ActuatorCommand = self.target_agent.step(decision_time)
-            observation_age: float = 0.0
-            latest_observation: Optional[ObservationState] = max(
-                self._observations.values(),
-                key=lambda observation: observation.available_at,
-                default=None,
-            )
-            if latest_observation is not None:
-                observation_age = max(0.0, decision_time - latest_observation.created_at)
-                self._observations[latest_observation.observation_id] = ObservationState(
-                    observation_id=latest_observation.observation_id,
-                    created_at=latest_observation.created_at,
-                    available_at=latest_observation.available_at,
-                    sensor_ids=latest_observation.sensor_ids,
-                    source_packet_ids=latest_observation.source_packet_ids,
-                    age_at_decision=observation_age,
-                )
-            submitted: bool = self.actuators.submit_command(agent_cmd, decision_time)
-            self._emit(
-                "agent.controller",
-                "COMMAND_ISSUED",
-                "INFO",
-                {
-                    "accepted": submitted,
-                    "command_id": agent_cmd.command_id,
-                    "input_timestamp": task.input_timestamp,
-                    "compute_started_at": task.started_at,
-                    "compute_completed_at": task.completed_at,
-                    "observation_age_s": observation_age,
-                    "observation_id": (
-                        latest_observation.observation_id if latest_observation is not None else None
-                    ),
-                    "throttle": agent_cmd.throttle,
-                    "brake": agent_cmd.brake,
-                    "steering": agent_cmd.steering,
-                },
             )
 
     def _emit_applied_commands(self, sim_time: float) -> None:
@@ -561,9 +559,8 @@ class SandboxEnvironment:
 
         delivered_packets = self._sample_and_deliver_sensors(sim_time, v_state)
         self._schedule_compute_tasks(sim_time, dt, delivered_packets)
-        completed_tasks = self._process_compute_tasks(sim_time, dt)
+        self._process_compute_tasks(sim_time, dt)
         self._emit_scheduler_status()
-        self._run_completed_controllers(sim_time, completed_tasks)
 
         obs_age = 0.0
         if hasattr(self.target_agent, "perception"):
