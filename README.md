@@ -111,6 +111,7 @@ TrueForge operates as two tightly coupled, deterministic subsystems:
 | :--- | :--- | :--- |
 | `POST` | `/api/harness/investigations` | Initiates asynchronous investigation session (`202 Accepted`) |
 | `GET` | `/api/harness/investigations/{id}` | Retrieves session snapshot, leading hypothesis, and decision trace |
+| `POST` | `/api/harness/investigations/{id}/approval` | Bearer-authenticated approval or rejection; approval resumes verification and regression |
 | `GET` | `/api/harness/investigations/{id}/events` | Retrieves full audit log of canonical lifecycle & System 1 events |
 | `GET` | `/api/harness/investigations` | Lists all active and retained investigation sessions |
 | `DELETE` | `/api/harness/investigations/{id}` | Removes session and cleans up owned evaluation artifacts |
@@ -122,7 +123,7 @@ TrueForge operates as two tightly coupled, deterministic subsystems:
 
 ### WebSocket Streaming
 
-- **Investigation Stream (`/ws/investigations/{investigation_id}`):** Atomically replays prior event history upon connection, then streams live System 1 & System 2 events in real time (`EXPERIMENT_STARTED`, `TASK_SCHEDULED`, `OBSERVATION_AVAILABLE`, `COMMAND_ISSUED`, `ACTUATOR_APPLIED`, `EVIDENCE_CAPTURED`, `HYPOTHESIS_UPDATED`, `DECISION_RECORDED`, etc.).
+- **Investigation Stream (`/ws/investigations/{investigation_id}`):** Atomically replays prior event history upon connection, then streams live System 1 & System 2 events in real time, including diagnosis, patch approval, verification, regression, and conclusion events. The delivery implementation is tracked independently in PR #21 and remains broker-free.
 - **Live Frame Stream (`/ws/live`):** Broadcasts high-rate vehicle state, obstacle telemetry, sensor queues, and safety oracle statuses.
 
 ### Model Context Protocol (MCP) Server
