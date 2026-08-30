@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from harness.models.evaluation import (
     ControllerHealth,
@@ -13,6 +13,7 @@ from harness.models.evaluation import (
     HarnessRun,
     HarnessRunStatus,
 )
+from harness.models.events import EventSeverity, HarnessEvent, HarnessEventType
 from harness.hypotheses import FalsificationPlan, Hypothesis, HypothesisEngine
 from harness.orchestration.run_manager import RunManager, default_run_manager
 from harness.reasoning.decision_trace import DecisionTrace, DecisionTraceBuilder
@@ -77,10 +78,13 @@ class AutonomousInvestigator:
         self,
         config: InvestigatorConfig,
         run_manager: Optional[RunManager] = None,
+        event_callback: Optional[Callable[[HarnessEvent], None]] = None,
+        investigation_id: Optional[str] = None,
     ) -> None:
-        self.config = config
+        self.config: InvestigatorConfig = config
         self.run_manager = run_manager or default_run_manager
-        self.investigation_id = f"investigation_{uuid.uuid4().hex[:8]}"
+        self.investigation_id: str = investigation_id or f"investigation_{uuid.uuid4()}"
+        self.event_callback: Optional[Callable[[HarnessEvent], None]] = event_callback
         self.planner = ExperimentPlanner(
             dimensions=[
                 PlannerDimension(
@@ -101,8 +105,36 @@ class AutonomousInvestigator:
         self.hypothesis_engine: HypothesisEngine = HypothesisEngine()
         self._falsification_plans: list[FalsificationPlan] = []
         self._decision_traces: list[DecisionTrace] = []
+        self._evaluation_ids: set[str] = set()
         self._last_run_limit: Optional[int] = None
         self._last_run_was_caller_limited: bool = False
+
+    def _emit_event(
+        self,
+        event_type: HarnessEventType,
+        payload: dict[str, Any],
+        severity: EventSeverity = EventSeverity.INFO,
+        evaluation_id: str = "",
+        run_id: str = "",
+    ) -> None:
+        """Publish one investigation lifecycle event without affecting execution."""
+        if self.event_callback is None:
+            return
+        event = HarnessEvent(
+            evaluation_id=evaluation_id or self.investigation_id,
+            run_id=run_id,
+            episode_id=run_id,
+            sim_time=0.0,
+            source="harness.investigator",
+            type=event_type,
+            severity=severity,
+            payload=payload,
+            investigation_id=self.investigation_id,
+        )
+        try:
+            self.event_callback(event)
+        except Exception:
+            pass
 
     @staticmethod
     def _to_outcome(run: HarnessRun) -> ExperimentOutcome:
@@ -129,7 +161,35 @@ class AutonomousInvestigator:
 
     def _execute_candidate(self, candidate: ExperimentCandidate) -> InvestigationRun:
         """Compile and execute one candidate while preserving structured failures."""
-        evaluation_id = ""
+        self._emit_event(
+            HarnessEventType.EXPERIMENT_PLANNED,
+            {"experiment": candidate.to_dict()},
+        )
+        self._emit_event(
+            HarnessEventType.EXPERIMENT_STARTED,
+            {"experiment": candidate.to_dict()},
+        )
+        evaluation_id: str
+        run: Optional[HarnessRun]
+        outcome: ExperimentOutcome
+        evaluation_id, run, outcome = self._run_candidate(candidate)
+        try:
+            result: InvestigationRun = self._finalize_candidate(
+                candidate, evaluation_id, outcome, run
+            )
+        except Exception:
+            if self.planner.ledger.get(candidate.experiment_id) is None:
+                self.planner.release(candidate.experiment_id)
+            raise
+        self._runs.append(result)
+        self._emit_candidate_events(candidate, result, evaluation_id, run)
+        return result
+
+    def _run_candidate(
+        self, candidate: ExperimentCandidate
+    ) -> tuple[str, Optional[HarnessRun], ExperimentOutcome]:
+        """Create and execute one evaluation, retaining structured failures."""
+        evaluation_id: str = ""
         run: Optional[HarnessRun] = None
         stage: str = "fault override construction"
         try:
@@ -152,6 +212,7 @@ class AutonomousInvestigator:
             )
             evaluation: HarnessEvaluation = self.run_manager.create_evaluation(request)
             evaluation_id = evaluation.evaluation_id
+            self._evaluation_ids.add(evaluation_id)
             stage = "System 1 execution"
             run = self.run_manager.execute_baseline(evaluation_id)
             outcome: ExperimentOutcome = self._to_outcome(run)
@@ -166,16 +227,106 @@ class AutonomousInvestigator:
                 },
             )
 
-        try:
-            result: InvestigationRun = self._finalize_candidate(
-                candidate, evaluation_id, outcome, run
+        return evaluation_id, run, outcome
+
+    def _emit_candidate_events(
+        self,
+        candidate: ExperimentCandidate,
+        result: InvestigationRun,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
+        """Publish the post-execution lifecycle events for one finalized candidate."""
+        self._emit_experiment_completed(candidate, result, evaluation_id, run)
+        self._emit_evidence_captured(candidate, result, evaluation_id, run)
+        self._emit_hypothesis_updated(candidate, result, evaluation_id, run)
+        self._emit_decision_recorded(candidate, result, evaluation_id, run)
+
+    def _emit_experiment_completed(
+        self,
+        candidate: ExperimentCandidate,
+        result: InvestigationRun,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
+        self._emit_event(
+            HarnessEventType.EXPERIMENT_COMPLETED,
+            {
+                "experiment_id": candidate.experiment_id,
+                "evaluation_id": evaluation_id,
+                "outcome": result.outcome.to_dict(),
+            },
+            evaluation_id=evaluation_id,
+            run_id=run.run_id if run else "",
+        )
+
+    def _emit_evidence_captured(
+        self,
+        candidate: ExperimentCandidate,
+        result: InvestigationRun,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
+        if result.evidence is not None:
+            self._emit_event(
+                HarnessEventType.EVIDENCE_CAPTURED,
+                {"experiment_id": candidate.experiment_id, "evidence": result.evidence.to_dict()},
+                evaluation_id=evaluation_id,
+                run_id=run.run_id if run else "",
             )
-        except Exception:
-            if self.planner.ledger.get(candidate.experiment_id) is None:
-                self.planner.release(candidate.experiment_id)
-            raise
-        self._runs.append(result)
-        return result
+
+    def _emit_hypothesis_updated(
+        self,
+        candidate: ExperimentCandidate,
+        result: InvestigationRun,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
+        self._emit_event(
+            HarnessEventType.HYPOTHESIS_UPDATED,
+            {
+                "experiment_id": candidate.experiment_id,
+                "hypotheses": self.hypothesis_engine.to_dict(),
+            },
+            evaluation_id=evaluation_id,
+            run_id=run.run_id if run else "",
+        )
+
+    def _emit_decision_recorded(
+        self,
+        candidate: ExperimentCandidate,
+        result: InvestigationRun,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
+        decision_trace = result.decision_trace
+        if decision_trace is not None:
+            self._emit_event(
+                HarnessEventType.DECISION_RECORDED,
+                {"experiment_id": candidate.experiment_id, "decision_trace": decision_trace.to_dict()},
+                evaluation_id=evaluation_id,
+                run_id=run.run_id if run else "",
+            )
+            self._emit_next_experiment_selected(candidate, decision_trace, evaluation_id, run)
+
+    def _emit_next_experiment_selected(
+        self,
+        candidate: ExperimentCandidate,
+        decision_trace: DecisionTrace,
+        evaluation_id: str,
+        run: Optional[HarnessRun],
+    ) -> None:
+        if decision_trace.next_experiment_id is not None:
+            self._emit_event(
+                HarnessEventType.NEXT_EXPERIMENT_SELECTED,
+                {
+                    "experiment_id": candidate.experiment_id,
+                    "next_experiment_id": decision_trace.next_experiment_id,
+                    "next_action": decision_trace.next_action,
+                },
+                evaluation_id=evaluation_id,
+                run_id=run.run_id if run else "",
+            )
 
     def _finalize_candidate(
         self,
@@ -195,6 +346,12 @@ class AutonomousInvestigator:
             )
             if plan is not None:
                 self._falsification_plans.append(plan)
+                self._emit_event(
+                    HarnessEventType.FALSIFICATION_PROPOSED,
+                    {"experiment_id": candidate.experiment_id, "plan": plan.to_dict()},
+                    evaluation_id=evaluation_id,
+                    run_id=run.run_id if run else "",
+                )
         decision_trace: DecisionTrace = DecisionTraceBuilder.build(
             candidate=candidate,
             outcome=outcome,
@@ -262,6 +419,16 @@ class AutonomousInvestigator:
         elif max_experiments is None:
             self._last_run_was_caller_limited = False
         return self
+
+    @property
+    def completed_run_count(self) -> int:
+        """Return the number of finalized experiments in this investigation."""
+        return len(self._runs)
+
+    @property
+    def evaluation_ids(self) -> tuple[str, ...]:
+        """Return every evaluation created, including candidates that later failed."""
+        return tuple(sorted(self._evaluation_ids))
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the complete investigation and its evidence-backed state.

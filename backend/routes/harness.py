@@ -13,6 +13,7 @@ from harness.evaluator.loop import ReliabilityEvaluationLoop
 from harness.diagnostics.analyzer import CausalTelemetryAnalyzer
 from harness.patcher.engine import AutoCodePatcher
 from harness.investigator import AutonomousInvestigator, InvestigatorConfig
+from harness.orchestration.investigation import default_investigation_store
 from sandbox.api.tools import get_scenario
 
 router = APIRouter(prefix="/api/harness", tags=["harness"])
@@ -231,21 +232,77 @@ def run_end_to_end_closed_loop(payload: CreateEvaluationPayload) -> Dict[str, An
     return eval_res.to_dict(include_telemetry=True)
 
 
-@router.post("/investigations")
+@router.post("/investigations", status_code=202)
 def run_autonomous_investigation(payload: InvestigationPayload) -> Dict[str, Any]:
-    """Let System 2 choose and execute bounded System 1 experiments."""
+    """Create an investigation session and start bounded background execution.
+
+    Args:
+        payload: Objective, scenario, hardware, seed, budget, and boundary-search
+            settings for the investigation.
+
+    Returns:
+        A `202 Accepted` session snapshot containing the investigation ID and
+        current lifecycle state. Execution continues in the background.
+
+    Raises:
+        HTTPException: 404 when the requested scenario is unknown; 503 when the
+            session store reaches capacity.
+    """
     if not get_scenario(payload.scenario_id):
         raise HTTPException(status_code=404, detail=f"Scenario '{payload.scenario_id}' not found.")
 
-    investigator = AutonomousInvestigator(
-        InvestigatorConfig(
-            objective=payload.objective,
-            hardware_preset_id=payload.hardware_preset_id,
-            scenario_id=payload.scenario_id,
-            controller_code=payload.controller_code,
-            seed=payload.seed,
-            budget=payload.budget,
-            max_boundary_steps=payload.max_boundary_steps,
+    try:
+        session: InvestigationSession = default_investigation_store.create(
+            InvestigatorConfig(
+                objective=payload.objective,
+                hardware_preset_id=payload.hardware_preset_id,
+                scenario_id=payload.scenario_id,
+                controller_code=payload.controller_code,
+                seed=payload.seed,
+                budget=payload.budget,
+                max_boundary_steps=payload.max_boundary_steps,
+            )
         )
-    )
-    return investigator.run().to_dict()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    default_investigation_store.start(session)
+    return session.snapshot()
+
+
+@router.get("/investigations/{investigation_id}")
+def get_investigation(investigation_id: str) -> Dict[str, Any]:
+    """Return the current state and completed result for one investigation session.
+
+    Args:
+        investigation_id: Stable ID returned by the investigation creation endpoint.
+
+    Returns:
+        Current session metadata, compact state fields, and the latest result snapshot.
+
+    Raises:
+        HTTPException: 404 when the session is not retained by the process store.
+    """
+    session = default_investigation_store.get(investigation_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+    return session.snapshot()
+
+
+@router.get("/investigations/{investigation_id}/events")
+def get_investigation_events(investigation_id: str) -> List[Dict[str, Any]]:
+    """Return the ordered canonical event history for polling clients.
+
+    Args:
+        investigation_id: Stable ID returned by the investigation creation endpoint.
+
+    Returns:
+        Serialized `HarnessEvent` objects in publication order.
+
+    Raises:
+        HTTPException: 404 when the session is not retained by the process store.
+    """
+    session = default_investigation_store.get(investigation_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
+    return [event.to_dict() for event in session.events()]
