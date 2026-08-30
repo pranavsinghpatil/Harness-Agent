@@ -169,17 +169,20 @@ class HarnessRun:
         }
         if include_frames:
             data["telemetry_frames"] = [
-                {
-                    "sim_time": round(f.sim_time, 4),
-                    "vehicle": {
-                        "x": round(f.vehicle_state.get("x", 0.0) if isinstance(f.vehicle_state, dict) else getattr(f.vehicle_state, "x", 0.0), 3),
-                        "y": round(f.vehicle_state.get("y", 0.0) if isinstance(f.vehicle_state, dict) else getattr(f.vehicle_state, "y", 0.0), 3),
-                        "heading": round(f.vehicle_state.get("heading", 0.0) if isinstance(f.vehicle_state, dict) else getattr(f.vehicle_state, "heading", 0.0), 3),
-                        "velocity": round(f.vehicle_state.get("velocity", 0.0) if isinstance(f.vehicle_state, dict) else getattr(f.vehicle_state, "velocity", 0.0), 3),
-                    },
-                    "min_clearance": round(f.min_clearance, 3),
-                    "active_faults": f.active_faults,
-                }
+                f.to_dict() if hasattr(f, "to_dict") else (
+                    f if isinstance(f, dict) else {
+                        "sim_time": round(f.sim_time, 4),
+                        "step": getattr(f, "step", 0),
+                        "vehicle_state": f.vehicle_state if isinstance(f.vehicle_state, dict) else getattr(f, "vehicle_state", {}),
+                        "min_clearance": round(f.min_clearance, 3),
+                        "active_faults": getattr(f, "active_faults", []),
+                        "dynamic_obstacles": getattr(f, "dynamic_obstacles", []),
+                        "new_violations": getattr(f, "new_violations", []),
+                        "hardware_metrics": getattr(f, "hardware_metrics", {}),
+                        "sensor_queue_depths": getattr(f, "sensor_queue_depths", {}),
+                        "actuator_command": getattr(f, "actuator_command", {}),
+                    }
+                )
                 for f in self.telemetry_frames
             ]
         return data
