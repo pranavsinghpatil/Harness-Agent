@@ -251,6 +251,24 @@ class SandboxEnvironment:
                 )
         return all_delivered
 
+    def _emit_compute_task(self, event_type: str, task: ComputeTask, sim_time: float) -> None:
+        """Publish scheduler provenance for one queued, started, or completed task."""
+        self._emit(
+            "hardware.scheduler",
+            event_type,
+            "INFO",
+            {
+                "task_id": task.task_id,
+                "name": task.name,
+                "compute_cost_units": task.compute_cost_units,
+                "input_timestamp": task.input_timestamp,
+                "deadline": task.deadline,
+                "timestamp": sim_time,
+                "started_at": task.started_at,
+                "completed_at": task.completed_at,
+            },
+        )
+
     def _check_termination(self, sim_time: float, vehicle_state: VehicleState, collision_res: CollisionResult) -> None:
         """Evaluates goal completion, collision termination, or timeout lifecycle triggers."""
         dist_to_goal = vehicle_state.position.distance_to(self.world_map.goal_position)
@@ -344,12 +362,55 @@ class SandboxEnvironment:
         self._prev_fault_ids = active_set
 
         applied_cmd = self.actuators.step(sim_time)
+        if applied_cmd.command_id > 0:
+            self._emit(
+                "actuator.pipeline",
+                "ACTUATOR_APPLIED",
+                "INFO",
+                {
+                    "command_id": applied_cmd.command_id,
+                    "timestamp": sim_time,
+                    "throttle": applied_cmd.throttle,
+                    "brake": applied_cmd.brake,
+                    "steering": applied_cmd.steering,
+                },
+            )
         v_state, col_res = self.physics.step(
             applied_cmd.throttle, applied_cmd.brake, applied_cmd.steering, applied_cmd.emergency_stop, dt
         )
 
         delivered_packets = self._sample_and_deliver_sensors(sim_time, v_state)
+        if delivered_packets:
+            self.target_agent.receive_sensor_packets(delivered_packets, sim_time)
+            perception_task = ComputeTask(
+                task_id=f"compute_perception_{self.clock.step_count}",
+                name="perception",
+                compute_cost_units=0.1,
+                deadline=sim_time + dt,
+                priority=5,
+                input_timestamp=sim_time,
+                result_payload={"packet_count": len(delivered_packets)},
+            )
+            if self.hardware.submit_task(perception_task):
+                self._emit_compute_task("TASK_SCHEDULED", perception_task, sim_time)
+
+        controller_task = ComputeTask(
+            task_id=f"compute_controller_{self.clock.step_count}",
+            name="controller",
+            compute_cost_units=0.1,
+            deadline=sim_time + dt,
+            priority=10,
+            input_timestamp=sim_time,
+        )
+        controller_queued = self.hardware.submit_task(controller_task)
+        if controller_queued:
+            self._emit_compute_task("TASK_SCHEDULED", controller_task, sim_time)
+
         self.hardware.step(sim_time, dt)
+        for task in self.hardware.started_tasks:
+            self._emit_compute_task("COMPUTE_STARTED", task, task.started_at or sim_time)
+        for task in self.hardware.completed_tasks_this_step:
+            self._emit_compute_task("TASK_COMPLETED", task, task.completed_at or sim_time)
 
         # Emit hardware scheduler events
         if self.hardware.metrics.is_throttled:
@@ -369,17 +430,36 @@ class SandboxEnvironment:
                 {"misses_delta": delta, "total_misses": self.hardware.metrics.total_deadline_misses},
             )
 
-        if delivered_packets:
-            self.target_agent.receive_sensor_packets(delivered_packets, sim_time)
-
-        agent_cmd = self.target_agent.step(sim_time)
-        self.actuators.submit_command(agent_cmd, sim_time)
-        self._emit(
-            "agent.controller",
-            "COMMAND_ISSUED",
-            "INFO",
-            {"throttle": agent_cmd.throttle, "brake": agent_cmd.brake, "steering": agent_cmd.steering},
-        )
+        if controller_task.is_completed:
+            agent_cmd = self.target_agent.step(sim_time)
+            submitted = self.actuators.submit_command(agent_cmd, sim_time)
+            self._emit(
+                "agent.controller",
+                "COMMAND_ISSUED",
+                "INFO",
+                {
+                    "accepted": submitted,
+                    "command_id": agent_cmd.command_id,
+                    "input_timestamp": controller_task.input_timestamp,
+                    "compute_started_at": controller_task.started_at,
+                    "compute_completed_at": controller_task.completed_at,
+                    "throttle": agent_cmd.throttle,
+                    "brake": agent_cmd.brake,
+                    "steering": agent_cmd.steering,
+                },
+            )
+        else:
+            self._emit(
+                "agent.controller",
+                "DEADLINE_MISSED",
+                "ERROR",
+                {
+                    "task_id": controller_task.task_id,
+                    "deadline": controller_task.deadline,
+                    "timestamp": sim_time,
+                    "reason": "controller compute did not complete",
+                },
+            )
 
         obs_age = 0.0
         if hasattr(self.target_agent, "perception"):

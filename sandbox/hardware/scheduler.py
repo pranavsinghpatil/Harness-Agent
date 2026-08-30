@@ -25,6 +25,8 @@ class VirtualEdgeScheduler:
         self.task_queue: list[ComputeTask] = []
         self.completed_tasks: list[ComputeTask] = []
         self.deadline_miss_events: list[dict[str, float | str]] = []
+        self.started_tasks: list[ComputeTask] = []
+        self.completed_tasks_this_step: list[ComputeTask] = []
         self.metrics = HardwareMetrics()
 
     def submit_task(self, task: ComputeTask) -> bool:
@@ -78,6 +80,10 @@ class VirtualEdgeScheduler:
 
         while self.task_queue and available_compute > 0:
             current_task = self.task_queue[0]
+            if not current_task.has_started:
+                current_task.has_started = True
+                current_task.started_at = sim_time
+                self.started_tasks.append(current_task)
             needed = current_task.compute_cost_units - current_task.progress_units
 
             if available_compute >= needed:
@@ -85,6 +91,7 @@ class VirtualEdgeScheduler:
                 consumed_compute += needed
                 current_task.progress_units = current_task.compute_cost_units
                 current_task.is_completed = True
+                current_task.completed_at = sim_time
                 self.task_queue.pop(0)
 
                 if sim_time > current_task.deadline:
@@ -148,6 +155,8 @@ class VirtualEdgeScheduler:
         if dt <= 0:
             return []
 
+        self.started_tasks = []
+        self.completed_tasks_this_step = []
         self._update_thermal_state(dt)
         results: tuple[list[ComputeTask], float, float] = self._process_task_queue(sim_time, dt)
         just_completed: list[ComputeTask] = results[0]
@@ -155,6 +164,7 @@ class VirtualEdgeScheduler:
         consumed_compute: float = results[2]
         self._audit_remaining_deadlines(sim_time)
         self._update_metrics(consumed_compute, dt)
+        self.completed_tasks_this_step = just_completed
 
         return just_completed
 
@@ -163,6 +173,8 @@ class VirtualEdgeScheduler:
         self.task_queue.clear()
         self.completed_tasks.clear()
         self.deadline_miss_events.clear()
+        self.started_tasks.clear()
+        self.completed_tasks_this_step.clear()
         self.profile.current_temperature = self.profile.thermal_ambient_temp
         self.profile.is_throttled = False
         self.profile.effective_cpu_ratio = 1.0
