@@ -11,6 +11,7 @@ runs in a background worker.
 | --- | --- |
 | `POST /api/harness/investigations` | Create and start an investigation session. |
 | `GET /api/harness/investigations/{investigation_id}` | Read current status, result, and error state. |
+| `POST /api/harness/investigations/{investigation_id}/approval` | Approve or reject the pending patch and resume the close loop. |
 | `GET /api/harness/investigations/{investigation_id}/events` | Poll the ordered canonical event history. |
 | `WS /ws/investigations/{investigation_id}` | Replay existing events, then stream new events until terminal state. |
 
@@ -22,7 +23,10 @@ Session lifecycle events are represented by `HarnessEvent` and include:
 `EXPERIMENT_STARTED`, `EXPERIMENT_COMPLETED`, `EVIDENCE_CAPTURED`,
 `HYPOTHESIS_UPDATED`, `FALSIFICATION_PROPOSED`, `DECISION_RECORDED`,
 `NEXT_EXPERIMENT_SELECTED`, `INVESTIGATION_COMPLETED`, and
-`INVESTIGATION_FAILED`.
+`INVESTIGATION_FAILED`. Repair sessions additionally emit
+`DIAGNOSIS_COMPLETED`, `PATCH_GENERATED`, `PATCH_APPROVAL_REQUESTED`,
+`PATCH_APPROVED` or `PATCH_REJECTED`, verification, regression, and conclusion
+events.
 
 Every event carries the stable `investigation_id`, source, severity, unique
 `event_id`, and structured payload. Experiment lifecycle and execution events
@@ -46,6 +50,8 @@ metadata and a compact control-plane view for the dashboard:
 - `active_hypothesis` and `leading_hypothesis` expose the current belief state.
 - `latest_decision` and `latest_failure` expose the newest decision trace and
   failed experiment outcome without requiring clients to parse the full result.
+- `phase` reports the close-loop state; repair snapshots include `diagnosis`,
+  `patch`, `approval`, `verification`, `regression`, and `conclusion`.
 
 The snapshot is serialized from an immutable investigator result snapshot under
 the session lock. This prevents concurrent REST polling from observing a

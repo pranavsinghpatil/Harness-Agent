@@ -13,7 +13,11 @@ import uuid
 from typing import Callable, Optional
 
 from harness.investigator import AutonomousInvestigator, InvestigatorConfig
+from harness.diagnostics.analyzer import CausalTelemetryAnalyzer
 from harness.models.events import EventSeverity, HarnessEvent, HarnessEventType
+from harness.models.investigation import InvestigationConclusion, InvestigationPhase, PatchApproval
+from harness.patcher.engine import AutoCodePatcher
+from harness.regression import RegressionSuiteRunner
 from harness.orchestration.run_manager import RunManager, default_run_manager
 
 
@@ -52,6 +56,7 @@ class InvestigationSession:
         self.investigation_id: str = investigation_id or f"investigation_{uuid.uuid4()}"
         self.run_manager: RunManager = run_manager or default_run_manager
         self.status: InvestigationStatus = InvestigationStatus.CREATED
+        self.phase: InvestigationPhase = InvestigationPhase.INVESTIGATING
         self.created_at: float = time.time()
         self.last_accessed_at: float = self.created_at
         self.started_at: Optional[float] = None
@@ -64,6 +69,13 @@ class InvestigationSession:
         self._future: Optional[Future[None]] = None
         self._on_finished: Optional[Callable[[], None]] = None
         self._result_snapshot: Optional[dict[str, object]] = None
+        self._diagnosis: Optional[dict[str, object]] = None
+        self._patch: Optional[dict[str, object]] = None
+        self._approval: Optional[PatchApproval] = None
+        self._verification: Optional[dict[str, object]] = None
+        self._regression: list[dict[str, object]] = []
+        self._conclusion: Optional[InvestigationConclusion] = None
+        self._approval_future: Optional[Future[None]] = None
         self._publish(
             HarnessEventType.INVESTIGATION_CREATED,
             {"investigation_id": self.investigation_id, "objective": config.objective},
@@ -158,6 +170,7 @@ class InvestigationSession:
     def _mark_failed_locked(self, error: str) -> None:
         """Transition to failed state; caller must hold the session lock."""
         self.status = InvestigationStatus.FAILED
+        self.phase = InvestigationPhase.FAILED
         self.error = error
         self.finished_at = time.time()
         self._publish(
@@ -167,7 +180,7 @@ class InvestigationSession:
         )
 
     def _run(self) -> None:
-        """Execute the deterministic investigator and close the session lifecycle."""
+        """Execute discovery, then open the repair approval gate when needed."""
         try:
             investigator: AutonomousInvestigator = AutonomousInvestigator(
                 self.config,
@@ -186,22 +199,152 @@ class InvestigationSession:
             with self._lock:
                 if self.status != InvestigationStatus.RUNNING:
                     return
-                if self._investigator is not None:
-                    self._result_snapshot = deepcopy(self._investigator.to_dict())
-                self.status = InvestigationStatus.COMPLETED
-                self.finished_at = time.time()
-                self._publish(
-                    HarnessEventType.INVESTIGATION_COMPLETED,
-                    {
-                        "investigation_id": self.investigation_id,
-                        "experiments_completed": (
-                            self._investigator.completed_run_count if self._investigator else 0
-                        ),
-                    },
-                )
+                self._refresh_result_locked()
+            try:
+                self._prepare_repair_or_complete()
+            except Exception as exc:
+                with self._lock:
+                    if self.status == InvestigationStatus.RUNNING:
+                        self._mark_failed_locked(f"{type(exc).__name__}: {exc}")
         finally:
             if self._on_finished is not None:
                 self._on_finished()
+
+    def _refresh_result_locked(self) -> None:
+        """Refresh the immutable investigator result while holding the session lock."""
+        if self._investigator is not None:
+            self._result_snapshot = deepcopy(self._investigator.to_dict())
+
+    def _select_failure_evaluation(self) -> tuple[str, object] | None:
+        """Select the first retained failed baseline as the repair target."""
+        investigator: Optional[AutonomousInvestigator] = self._investigator
+        if investigator is None:
+            return None
+        getter = getattr(self.run_manager, "get_evaluation", None)
+        if getter is None:
+            return None
+        for evaluation_id in investigator.evaluation_ids:
+            evaluation = getter(evaluation_id)
+            baseline = getattr(evaluation, "baseline_run", None) if evaluation else None
+            baseline_status = getattr(getattr(baseline, "status", None), "value", "")
+            if baseline is not None and (baseline.violations or baseline_status != "COMPLETED"):
+                return evaluation_id, baseline
+        return None
+
+    def _prepare_repair_or_complete(self) -> None:
+        """Diagnose the retained failure and stop at a human approval boundary."""
+        selected = self._select_failure_evaluation()
+        if selected is None:
+            self._complete_with_conclusion("PROVEN_SAFE", "No safety failure required a repair.")
+            return
+        evaluation_id: str
+        baseline: object
+        evaluation_id, baseline = selected
+        with self._lock:
+            self.phase = InvestigationPhase.DIAGNOSING
+        diagnosis = CausalTelemetryAnalyzer.analyze_run(baseline)
+        diagnosis.evaluation_id = evaluation_id
+        patch = AutoCodePatcher.generate_patch(self.config.controller_code or "", diagnosis)
+        with self._lock:
+            self._diagnosis = diagnosis.to_dict()
+            self._patch = patch.to_dict()
+            self.phase = InvestigationPhase.AWAITING_APPROVAL
+            self._refresh_result_locked()
+        self._publish(HarnessEventType.DIAGNOSIS_COMPLETED, diagnosis.to_dict())
+        self._publish(HarnessEventType.PATCH_GENERATED, patch.to_dict())
+        self._publish(HarnessEventType.PATCH_APPROVAL_REQUESTED, {"patch_id": patch.patch_id})
+
+    def _complete_with_conclusion(self, outcome: str, limitation: str = "") -> None:
+        """Finalize a session and publish its structured conclusion."""
+        with self._lock:
+            leading = self._leading_hypothesis_locked()
+            self._conclusion = InvestigationConclusion(
+                outcome=outcome,
+                leading_hypothesis=leading,
+                limitations=[limitation] if limitation else [],
+            )
+            self.phase = InvestigationPhase.COMPLETED
+            self.status = InvestigationStatus.COMPLETED
+            self.finished_at = time.time()
+            self._refresh_result_locked()
+            conclusion = self._conclusion.to_dict()
+        self._publish(HarnessEventType.CONCLUSION_RECORDED, conclusion)
+        self._publish(
+            HarnessEventType.INVESTIGATION_COMPLETED,
+            {"investigation_id": self.investigation_id, "phase": self.phase.value},
+        )
+
+    def _leading_hypothesis_locked(self) -> Optional[dict[str, object]]:
+        """Read the strongest hypothesis from the latest investigator snapshot."""
+        result = self._investigator.to_dict() if self._investigator else {}
+        hypothesis_state = result.get("hypotheses", {})
+        hypotheses = hypothesis_state.get("hypotheses", []) if isinstance(hypothesis_state, dict) else []
+        if not isinstance(hypotheses, list):
+            return None
+        return max(hypotheses, key=lambda item: float(item.get("confidence", 0.0)), default=None)
+
+    def approve_patch(self, approval: PatchApproval) -> dict[str, object]:
+        """Accept or reject the pending patch and return the updated snapshot."""
+        with self._lock:
+            if self.phase != InvestigationPhase.AWAITING_APPROVAL or self._patch is None:
+                raise RuntimeError("investigation has no patch awaiting approval")
+            if approval.patch_id != self._patch.get("patch_id"):
+                raise ValueError("approval patch_id does not match the pending patch")
+            if approval.decision not in {"APPROVE", "REJECT"}:
+                raise ValueError("decision must be APPROVE or REJECT")
+            self._approval = approval
+            if approval.decision == "REJECT":
+                self.phase = InvestigationPhase.PATCH_REJECTED
+            else:
+                self.phase = InvestigationPhase.VERIFYING
+        self._publish(
+            HarnessEventType.PATCH_APPROVED if approval.decision == "APPROVE" else HarnessEventType.PATCH_REJECTED,
+            approval.to_dict(),
+        )
+        if approval.decision == "REJECT":
+            self._complete_with_conclusion("PATCH_REJECTED", approval.reason)
+        else:
+            self._approval_future = _DEFAULT_EXECUTOR.submit(self._verify_and_regress)
+        return self.snapshot()
+
+    def _verify_and_regress(self) -> None:
+        """Run approved verification, replay the discovered suite, and conclude."""
+        try:
+            patch = self._patch or {}
+            evaluation_id = str(self._diagnosis.get("evaluation_id", "")) if self._diagnosis else ""
+            with self._lock:
+                self.phase = InvestigationPhase.VERIFYING
+            verification = self.run_manager.execute_verification(
+                evaluation_id=evaluation_id,
+                patched_code=str(patch.get("patched_code", "")),
+                agent_id="verified_hardened_target",
+                event_callback=self._on_investigator_event,
+                max_sim_time=self.config.max_sim_time,
+            )
+            verification_result = verification.to_dict()
+            with self._lock:
+                self._verification = verification_result
+            event_type = HarnessEventType.VERIFICATION_PASSED if not verification.violations else HarnessEventType.VERIFICATION_FAILED
+            self._publish(event_type, verification_result)
+            with self._lock:
+                self.phase = InvestigationPhase.REGRESSING
+            evaluation_ids = self.evaluation_ids()
+            self._publish(HarnessEventType.REGRESSION_STARTED, {"evaluation_count": len(evaluation_ids)})
+            regression = RegressionSuiteRunner(self.run_manager).run(
+                evaluation_ids,
+                str(patch.get("patched_code", "")),
+                event_callback=self._on_investigator_event,
+                max_sim_time=self.config.max_sim_time,
+            )
+            with self._lock:
+                self._regression = regression
+            self._publish(HarnessEventType.REGRESSION_COMPLETED, {"cases": regression})
+            outcome = "PROVEN_REPAIRED" if regression and all(case["passed"] for case in regression) else "NOT_PROVEN_SAFE"
+            self._complete_with_conclusion(outcome, "Regression uses the retained deterministic experiment schedules.")
+        except Exception as exc:
+            with self._lock:
+                if self.status == InvestigationStatus.RUNNING:
+                    self._mark_failed_locked(f"{type(exc).__name__}: {exc}")
 
     def wait(self, timeout: Optional[float] = None) -> bool:
         """Wait for completion and return whether the worker has stopped."""
@@ -242,10 +385,18 @@ class InvestigationSession:
             finished_at: Optional[float] = self.finished_at
             event_count: int = len(self._events)
             result: Optional[dict[str, object]] = deepcopy(self._result_snapshot)
+            phase: InvestigationPhase = self.phase
+            diagnosis: Optional[dict[str, object]] = deepcopy(self._diagnosis)
+            patch: Optional[dict[str, object]] = deepcopy(self._patch)
+            approval: Optional[dict[str, object]] = self._approval.to_dict() if self._approval else None
+            verification: Optional[dict[str, object]] = deepcopy(self._verification)
+            regression: list[dict[str, object]] = deepcopy(self._regression)
+            conclusion: Optional[dict[str, object]] = self._conclusion.to_dict() if self._conclusion else None
         state: dict[str, object] = self._derive_snapshot_state(result)
         return {
             "investigation_id": self.investigation_id,
             "status": status.value,
+            "phase": phase.value,
             "objective": self.config.objective,
             "scenario_id": self.config.scenario_id,
             "hardware_preset_id": self.config.hardware_preset_id,
@@ -257,6 +408,12 @@ class InvestigationSession:
             "finished_at": finished_at,
             "event_count": event_count,
             "error": error,
+            "diagnosis": diagnosis,
+            "patch": patch,
+            "approval": approval,
+            "verification": verification,
+            "regression": regression,
+            "conclusion": conclusion,
             **state,
             "result": result,
         }

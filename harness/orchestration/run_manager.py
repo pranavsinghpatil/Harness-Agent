@@ -172,6 +172,7 @@ class RunManager:
         patched_code: str,
         agent_id: str = "verified_target",
         event_callback: Optional[Callable[[HarnessEvent], None]] = None,
+        max_sim_time: Optional[float] = None,
     ) -> HarnessRun:
         """Execute the post-patch verification run on the identical seed and fault schedule.
 
@@ -181,6 +182,7 @@ class RunManager:
             agent_id: Assigned agent identifier.
             event_callback: Optional per-execution sink for forwarding events to
                 an owning investigation session.
+            max_sim_time: Optional upper bound for the verification episode.
 
         Returns:
             Executed verification HarnessRun.
@@ -213,7 +215,7 @@ class RunManager:
             experiment_id=experiment_id,
         )
 
-        verify_run: HarnessRun = session.execute()
+        verify_run: HarnessRun = session.execute(max_sim_time=max_sim_time)
         evaluation.verification_run = verify_run
 
         evaluation.final_result = self._build_verification_result(evaluation, verify_run)
