@@ -62,6 +62,10 @@ def test_investigator_executes_candidates_and_preserves_evidence() -> None:
     assert result["hypotheses"]["hypotheses"]
     assert result["falsification_plans"]
     assert result["runs"][0]["evidence"] is not None
+    assert len(result["decision_trace"]) == 5
+    assert result["decision_trace"][0]["action"] == "ESTABLISH_BASELINE"
+    assert result["decision_trace"][-1]["action"] == "TEST_INTERACTION"
+    assert result["decision_trace"][-1]["selected_hypothesis_id"]
 
 
 def test_investigator_limits_a_short_run_without_spending_remaining_budget() -> None:

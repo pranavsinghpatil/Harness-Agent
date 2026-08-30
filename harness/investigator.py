@@ -15,6 +15,7 @@ from harness.models.evaluation import (
 )
 from harness.hypotheses import FalsificationPlan, HypothesisEngine
 from harness.orchestration.run_manager import RunManager, default_run_manager
+from harness.reasoning.decision_trace import DecisionTrace, DecisionTraceBuilder
 from harness.planning import (
     ExperimentCandidate,
     EvidenceRecord,
@@ -56,6 +57,7 @@ class InvestigationRun:
     evaluation_id: str
     outcome: ExperimentOutcome
     evidence: Optional[EvidenceSnapshot] = None
+    decision_trace: Optional[DecisionTrace] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize one investigation step for REST, MCP, and audit logs."""
@@ -64,6 +66,7 @@ class InvestigationRun:
             "experiment": self.candidate.to_dict(),
             "outcome": self.outcome.to_dict(),
             "evidence": self.evidence.to_dict() if self.evidence else None,
+            "decision_trace": self.decision_trace.to_dict() if self.decision_trace else None,
         }
 
 
@@ -97,6 +100,7 @@ class AutonomousInvestigator:
         self._runs: list[InvestigationRun] = []
         self.hypothesis_engine: HypothesisEngine = HypothesisEngine()
         self._falsification_plans: list[FalsificationPlan] = []
+        self._decision_traces: list[DecisionTrace] = []
         self._last_run_limit: Optional[int] = None
         self._last_run_was_caller_limited: bool = False
 
@@ -164,12 +168,19 @@ class AutonomousInvestigator:
             plan: Optional[FalsificationPlan] = self.hypothesis_engine.propose_falsification(record, self.planner.dimensions)
             if plan is not None:
                 self._falsification_plans.append(plan)
+        decision_trace: DecisionTrace = DecisionTraceBuilder.build(
+            candidate=candidate,
+            outcome=outcome,
+            hypotheses=self.hypothesis_engine.hypotheses,
+        )
+        self._decision_traces.append(decision_trace)
         evidence: Optional[EvidenceSnapshot] = self._build_evidence(run)
         result = InvestigationRun(
             candidate=candidate,
             evaluation_id=evaluation_id,
             outcome=outcome,
             evidence=evidence,
+            decision_trace=decision_trace,
         )
         self._runs.append(result)
         return result
@@ -261,4 +272,5 @@ class AutonomousInvestigator:
             "evidence": planner_status["summary"],
             "hypotheses": self.hypothesis_engine.to_dict(),
             "falsification_plans": [plan.to_dict() for plan in self._falsification_plans],
+            "decision_trace": [trace.to_dict() for trace in self._decision_traces],
         }
