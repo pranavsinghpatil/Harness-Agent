@@ -8,8 +8,8 @@ interface HeaderProps {
   backendConnected: boolean;
   simStatusText: string;
   simStatusClass: string;
-  activeTab: "visualizer" | "harness";
-  onTabChange: (tab: "visualizer" | "harness") => void;
+  activeTab: "workbench" | "investigator";
+  onTabChange: (tab: "workbench" | "investigator") => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -34,19 +34,19 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Brand & Title */}
       <div className="flex items-center space-x-3">
         <div className="w-10 h-10 rounded-xl bg-linear-to-tr from-indigo-600 via-indigo-500 to-purple-600 flex items-center justify-center font-black text-white shadow-lg shadow-indigo-500/25 tracking-wider">
-          HA
+          TF
         </div>
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-base font-bold tracking-tight text-white">
-              Harness-Agent
+              TrueForge Harness-Agent
             </h1>
             <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              Sandbox v0.2.0
+              v0.2.0
             </span>
           </div>
           <p className="text-xs text-slate-400">
-            Deterministic Hardware Simulation Testbed & Agent Reliability Harness
+            Deterministic Hardware Simulation Testbed & Closed-Loop Agent Reliability Harness
           </p>
         </div>
       </div>
@@ -54,24 +54,24 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Navigation Tabs */}
       <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-medium">
         <button
-          onClick={() => onTabChange("visualizer")}
-          className={`px-3 py-1.5 rounded-md transition ${
-            activeTab === "visualizer"
-              ? "bg-indigo-600 text-white shadow-sm"
+          onClick={() => onTabChange("workbench")}
+          className={`px-3.5 py-1.5 rounded-md transition flex items-center gap-1.5 ${
+            activeTab === "workbench"
+              ? "bg-indigo-600 text-white shadow-sm font-semibold"
               : "text-slate-400 hover:text-slate-200"
           }`}
         >
-          2D Simulation Visualizer
+          <span>⚡ Evaluation Workbench</span>
         </button>
         <button
-          onClick={() => onTabChange("harness")}
-          className={`px-3 py-1.5 rounded-md transition ${
-            activeTab === "harness"
-              ? "bg-indigo-600 text-white shadow-sm"
+          onClick={() => onTabChange("investigator")}
+          className={`px-3.5 py-1.5 rounded-md transition flex items-center gap-1.5 ${
+            activeTab === "investigator"
+              ? "bg-indigo-600 text-white shadow-sm font-semibold"
               : "text-slate-400 hover:text-slate-200"
           }`}
         >
-          Autonomous Reliability Loop
+          <span>🔬 Autonomous Investigator</span>
         </button>
       </div>
 

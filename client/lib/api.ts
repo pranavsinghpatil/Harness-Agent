@@ -7,6 +7,7 @@ import {
   CausalDiagnosticReport,
   PatchResult,
   VerificationResult,
+  InvestigationResult,
 } from "../types/simulation";
 
 export interface RunScenarioPayload {
@@ -201,3 +202,28 @@ export async function runFullEvaluation(
   return res.json();
 }
 
+export interface InvestigationPayload {
+  objective: string;
+  hardware_preset_id?: string;
+  scenario_id?: string;
+  controller_code?: string | null;
+  seed?: number;
+  budget?: number;
+  max_boundary_steps?: number;
+}
+
+export async function runInvestigation(
+  apiBase: string,
+  payload: InvestigationPayload
+): Promise<InvestigationResult> {
+  const res = await fetch(`${apiBase}/api/harness/investigations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Autonomous investigation failed (${res.status})`);
+  }
+  return res.json();
+}

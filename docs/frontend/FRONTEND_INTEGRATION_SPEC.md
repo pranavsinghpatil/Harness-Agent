@@ -1,79 +1,143 @@
 # TrueForge Agent Harness & Virtual Simulation Sandbox
 ## 🖥️ Frontend Engineering Specification & Integration Guide
 
-**Document Version:** `1.0.0-final`  
+**Document Version:** `2.0.0-final`  
 **Backend API Version:** `v0.2.0`  
-**Target Audience:** Frontend Engineers, UI/UX Developers, Visualizer Engineers  
-**Backend Server Default Origin:** `http://localhost:8000` (FastAPI + WebSockets)
+**Target Audience:** Frontend Engineers, UI/UX Developers, Visualizer Engineers, Reliability Engineers  
+**Backend Server Default Origin:** `http://localhost:8000` (FastAPI + WebSockets)  
+**MCP Server Standard:** JSON-RPC 2.0 Stdio (`mcp_server/server.py`)
 
 ---
 
 ## 📑 Table of Contents
-1. [System Architecture & Data Flow Mental Model](#1-system-architecture--data-flow-mental-model)
-2. [Why 63k-Line JSON Exists vs WebSocket Streaming](#2-why-63k-line-json-exists-vs-websocket-streaming)
-3. [Full TypeScript Type Definitions & Data Contracts](#3-full-typescript-type-definitions--data-contracts)
-4. [Complete REST API Catalog](#4-complete-rest-api-catalog)
-5. [WebSocket Real-Time Live Streaming Contract](#5-websocket-real-time-live-streaming-contract)
-6. [2D Canvas Visualizer Coordinate System & Rendering Specs](#6-2d-canvas-visualizer-coordinate-system--rendering-specs)
-7. [Client-Side Playback & Scrubber Engine Implementation](#7-client-side-playback--scrubber-engine-implementation)
-8. [Causal DAG Graph Rendering Spec](#8-causal-dag-graph-rendering-spec)
-9. [Code Patch Diff & Provenance Component](#9-code-patch-diff--provenance-component)
-10. [3-Pillar Verification Matrix & Certification Badge](#10-3-pillar-verification-matrix--certification-badge)
-11. [Deterministic Replay & Hash Auditing](#11-deterministic-replay--hash-auditing)
-12. [Common Gotchas & Troubleshooting](#12-common-gotchas--troubleshooting)
+1. [System Architecture & Dual-Engine Mental Model](#1-system-architecture--dual-engine-mental-model)
+2. [Investigation Loop: System 1 Sandbox vs System 2 Investigator](#2-investigation-loop-system-1-sandbox-vs-system-2-investigator)
+3. [Why 63k-Line JSON Exists vs WebSocket Streaming](#3-why-63k-line-json-exists-vs-websocket-streaming)
+4. [Full TypeScript Type Definitions & Data Contracts](#4-full-typescript-type-definitions--data-contracts)
+5. [Complete REST API Catalog](#5-complete-rest-api-catalog)
+6. [Autonomous Investigator API Contract (`/api/harness/investigations`)](#6-autonomous-investigator-api-contract-apiharnessinvestigations)
+7. [MCP Canonical Tools Catalog](#7-mcp-canonical-tools-catalog)
+8. [WebSocket Real-Time Live Streaming Contract](#8-websocket-real-time-live-streaming-contract)
+9. [2D Canvas Visualizer Coordinate System & Rendering Specs](#9-2d-canvas-visualizer-coordinate-system--rendering-specs)
+10. [Client-Side Playback & Scrubber Engine Implementation](#10-client-side-playback--scrubber-engine-implementation)
+11. [Causal DAG Graph Rendering Spec](#11-causal-dag-graph-rendering-spec)
+12. [Autonomous Hypothesis & Decision Trace UI Components](#12-autonomous-hypothesis--decision-trace-ui-components)
+13. [Code Patch Diff & Provenance Component](#13-code-patch-diff--provenance-component)
+14. [3-Pillar Verification Matrix & Certification Badge](#14-3-pillar-verification-matrix--certification-badge)
+15. [Deterministic Replay & Hash Auditing](#15-deterministic-replay--hash-auditing)
+16. [Common Gotchas & Troubleshooting](#16-common-gotchas--troubleshooting)
 
 ---
 
-## 1. System Architecture & Data Flow Mental Model
+## 1. System Architecture & Dual-Engine Mental Model
 
-The platform consists of two cooperating engines:
-
-1. **System 1 (Virtual Hardware Physics & Silicon Sandbox):**
-   - Deterministic 100 Hz physics engine ($dt = 0.01\text{s}$), asynchronous hardware transport bus, multi-core SoC scheduler with thermal curves and deadline misses, LiDAR raycaster, IMU, cameras, and physical actuators.
-2. **System 2 (Reliability Evaluation, Diagnostics & Auto-Patcher):**
-   - Automated closed loop: Runs baseline simulation $\to$ captures invariant violations and granular event streams $\to$ builds an empirical causal Directed Acyclic Graph (DAG) $\to$ synthesizes code patch guards $\to$ re-runs verification on identical seed and hardware profile $\to$ evaluates 3-pillar safety matrix.
+The TrueForge platform separates deterministic physics simulation from autonomous causal reliability investigation into two cooperating engines:
 
 ```mermaid
-flowchart LR
-    subgraph System 2: Evaluation Orchestrator
-        Config[Hardware Preset + Scenario + Seed] --> Baseline[1. Execute Baseline Run]
-        Baseline --> Violations{Violations / Invariant Breach?}
-        Violations -- Yes --> Diag[2. Causal Telemetry Diagnosis]
-        Diag --> Patch[3. Auto-Code Patch Synthesis]
-        Patch --> Verify[4. Verification Run Identical Seed]
-        Verify --> Matrix[5. 3-Pillar Verification Gate]
-        Violations -- No --> Safe[Zero-Violation Certificate]
+flowchart TB
+    subgraph S2["System 2: Autonomous Decision & Reliability Investigator"]
+        direction TB
+        Obj["Investigation Objective & Budget"] --> Planner["Deterministic Experiment Planner<br/>(Baseline → Screen → Boundary → Interaction)"]
+        Planner --> HypoEngine["Competing Hypothesis Engine<br/>(Active / Supported / Refuted)"]
+        HypoEngine --> DecisionTrace["Auditable Decision Trace Builder<br/>(Information Gain & Belief Updates)"]
+        DecisionTrace --> Diag["Causal DAG Failure Analyzer"]
+        Diag --> Patcher["Auto-Code Patcher (AST & Guards)"]
+        Patcher --> Gate["3-Pillar Safety Verification Gate"]
     end
 
-    subgraph System 1: Real-Time Virtual Sandbox
-        Sim[100 Hz Simulation Clock & Physics]
-        Bus[Hardware Transport Bus & SoC Scheduler]
-        Sensors[LiDAR, IMU, Cameras, Encoders]
-        Agent[Target Controller Agent]
-        Oracle[Safety Oracle Invariants]
-        Sim <--> Bus <--> Sensors <--> Agent <--> Oracle
+    subgraph S1["System 1: Deterministic Physics & Silicon Sandbox"]
+        direction TB
+        Clock["100 Hz Deterministic Physics Clock (dt = 0.01s)"]
+        SoC["Multi-Core SoC Scheduler & Hardware Bus"]
+        Sensors["LiDAR Raycaster, IMU, Cameras, Encoders"]
+        Agent["Target Controller Agent"]
+        Oracle["Safety Oracle & Invariant Monitor"]
+        Perturb["Bounded Perturbation Space Engine<br/>(Camera Latency, CPU Avail, Brake Effect)"]
+        Evidence["Provenance-Rich Evidence Recorder<br/>(Signals, Event Links, Trace Hashes)"]
+
+        Clock <--> SoC <--> Sensors <--> Agent <--> Oracle
+        Perturb --> SoC
+        Perturb --> Sensors
+        Oracle --> Evidence
     end
 
-    Baseline -.->|Executes| Sim
-    Verify -.->|Executes| Sim
+    Planner ==>|"Dispatches Bounded Experiments"| S1
+    S1 ==>|"Streams Immutable Telemetry & Evidence Snapshots"| S2
+```
+
+### Engine Separation Principles
+1. **System 1 (Virtual Hardware Physics & Silicon Sandbox):**
+   - **Deterministic 100 Hz physics engine** ($\Delta t = 0.01\text{s}$), asynchronous hardware transport bus, multi-core SoC scheduler with thermal throttle curves and deadline misses, sensor models (LiDAR, IMU, Camera), and physical vehicle kinematics.
+   - Accepts declarative perturbation values (sensor latency, CPU availability, brake effectiveness) and returns bit-exact immutable telemetry traces.
+2. **System 2 (Autonomous Investigator & Reliability Auto-Patcher):**
+   - Drives the continuous reliability loop: `PLAN -> RUN -> OBSERVE -> HYPOTHESIZE -> TEST -> DIAGNOSE -> REPAIR -> VERIFY`.
+   - Maintains competing causal hypotheses, generates counterfactual falsification plans, records auditable decision traces, diagnoses root causes with causal DAGs, synthesizes AST patches, and verifies safety invariants.
+
+---
+
+## 2. Investigation Loop: System 1 Sandbox vs System 2 Investigator
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Frontend Workbench
+    participant API as FastAPI Router
+    participant S2 as System 2 Investigator
+    participant S1 as System 1 Sandbox
+
+    UI->>API: POST /api/harness/investigations (Objective, Budget=12)
+    API->>S2: Initialize AutonomousInvestigator(config)
+    
+    rect rgb(240, 245, 255)
+    Note over S2,S1: Phase 1: Baseline Characterization
+    S2->>S1: Execute exp_001 (Baseline, Zero Faults)
+    S1-->>S2: TelemetryFrame[] + EvidenceSnapshot (PASS)
+    S2->>S2: Record Baseline Invariant State
+    end
+
+    rect rgb(255, 245, 240)
+    Note over S2,S1: Phase 2: Adverse Endpoint Screening
+    S2->>S1: Execute exp_002 (Camera Latency = 500ms)
+    S1-->>S2: TelemetryFrame[] (FAIL: Unsafe Stopping Distance)
+    S2->>S2: Spawn Hypothesis H-sensor_camera_latency_ms (Conf: 0.75)
+    S2->>S2: Propose Falsification Plan (Hold constant, restore baseline)
+    end
+
+    rect rgb(245, 255, 245)
+    Note over S2,S1: Phase 3: Binary Boundary Refinement
+    S2->>S1: Execute exp_003 (Camera Latency = 250ms midpoint)
+    S1-->>S2: TelemetryFrame[] (PASS: Margin 1.1m)
+    S2->>S2: Narrow Boundary to [250ms, 500ms]
+    end
+
+    rect rgb(255, 250, 240)
+    Note over S2,S1: Phase 4: Combinatorial Interaction Stress
+    S2->>S1: Execute exp_004 (Latency=250ms + CPU Avail=0.5)
+    S1-->>S2: TelemetryFrame[] (FAIL: Thermal Throttle & Crash)
+    S2->>S2: Spawn Interaction Hypothesis H-latency+compute
+    end
+
+    S2->>S2: Build Auditable Decision Traces & Final Belief State
+    S2-->>API: InvestigationResult (Runs, Hypotheses, Traces, Evidence)
+    API-->>UI: Complete JSON Response
 ```
 
 ---
 
-## 2. Why 63k-Line JSON Exists vs WebSocket Streaming
+## 3. Why 63k-Line JSON Exists vs WebSocket Streaming
 
 ### ❓ The Question
-> *"When calling `/api/scenarios/run` or `/api/harness/evaluate-full`, the backend returns a 63,000-line JSON payload in under 200ms. Is this precalculated or fake? How do we integrate this into a 60 FPS 2D visualizer?"*
+> *"When calling `/api/scenarios/run`, `/api/harness/evaluate-full`, or `/api/harness/investigations`, the backend returns large time-series payloads in under 200ms. Is this precalculated? How do we render this smoothly at 60 FPS?"*
 
 ### 💡 The Reality
-1. **Simulation Execution Speed is Faster Than Real Time:**
-   - The virtual sandbox runs math and kinematic physics in memory without heavy rendering locks. A 30-second episode with $3,000$ simulation steps ($dt = 0.01\text{s}$) executes in **~80–180ms of CPU wall time**.
-2. **The JSON Contains the Complete Time-Series Trajectory:**
+1. **In-Memory Physics Speed:**
+   - The virtual sandbox runs math and kinematic physics in memory without heavy rendering locks. A 30-second episode with $3,000$ simulation steps ($\Delta t = 0.01\text{s}$) executes in **~80–180ms of CPU wall time**.
+2. **Comprehensive Telemetry Coverage:**
    - $3,000\text{ frames} \times \approx 20\text{ fields/frame}$ (kinematics, hardware CPU/temperature metrics, dynamic obstacles, actuator commands, queue depths, safety violations) $\approx 63,000\text{ lines of JSON}$.
-3. **Two Frontend Integration Modes:**
-   - **Mode A: Batch Ingestion & Client-Side Scrubbing (Default for Evaluation Workbench):**
-     - You receive the complete `frames: TelemetryFrame[]` array up-front.
-     - You store it in memory (`state.currentFrames = data.frames`).
+3. **Two Frontend Modes:**
+   - **Mode A: Batch Ingestion & Client-Side Scrubbing (Default for Evaluation & Investigation Workbench):**
+     - You receive the complete `telemetry_frames: TelemetryFrame[]` array up-front.
+     - Store it in memory (`state.currentFrames = data.frames`).
      - A simple `setInterval` or `requestAnimationFrame` ticker advances `currentFrameIndex` at 50 Hz ($20\text{ms}$ per frame), drawing smoothly on canvas and giving the user instant scrubbing capabilities (pause, seek, step frame-by-frame, 0.5x/1x/2x/5x speed).
    - **Mode B: Live WebSocket Streaming (For Real-Time Monitoring):**
      - Connect to `ws://localhost:8000/ws/live/{scenario_id}`.
@@ -81,9 +145,9 @@ flowchart LR
 
 ---
 
-## 3. Full TypeScript Type Definitions & Data Contracts
+## 4. Full TypeScript Type Definitions & Data Contracts
 
-Copy-paste these exact types into your frontend codebase (e.g., `src/types/harness.ts`):
+Copy-paste these exact types into your frontend codebase (e.g., `src/types/harness.ts` or `client/types/simulation.ts`):
 
 ```typescript
 // ==========================================
@@ -149,9 +213,9 @@ export interface WorldSpec {
 }
 
 export interface FaultDefinition {
-  id: string; // e.g. "lidar_drop_01"
-  type: "delay" | "drop" | "jitter" | "drift" | "stuck" | "scale" | "burst";
-  target: string; // e.g. "sensor.lidar", "sensor.camera", "hardware.compute", "actuator.brake"
+  id: string; // e.g. "exp_002:sensor.camera.latency_ms"
+  type: string; // "delay", "drop", "jitter", "drift", "stuck", "scale", "added_latency", "cpu_availability", "reduced_effectiveness"
+  target: string; // "transport.camera", "hardware.compute", "actuator.brake", "sensor.lidar"
   start_time: number; // seconds
   duration: number; // seconds
   parameters: Record<string, any>;
@@ -442,7 +506,7 @@ export interface HarnessRun {
   };
   events_count: number;
   fingerprint: RunConfigFingerprint | null;
-  telemetry_frames?: TelemetryFrame[]; // Included if include_telemetry=True
+  telemetry_frames?: TelemetryFrame[];
 }
 
 export interface HarnessEvaluationResult {
@@ -475,18 +539,165 @@ export interface HarnessEvaluation {
   verification_run: HarnessRun | null;
   final_result: HarnessEvaluationResult | null;
 }
+
+// ==========================================
+// 8. SYSTEM 1 & 2 AUTONOMOUS INVESTIGATOR CONTRACTS
+// ==========================================
+export type ExperimentPhase = "BASELINE" | "SCREEN" | "BOUNDARY" | "INTERACTION";
+export type HypothesisStatus = "ACTIVE" | "SUPPORTED" | "REFUTED";
+export type InvestigationStatus = "COMPLETE" | "BUDGET_EXHAUSTED" | "PARTIAL" | "IN_PROGRESS";
+
+export interface PlannerDimension {
+  id: string; // e.g. "sensor.camera.latency_ms"
+  baseline: number; // e.g. 0.0
+  minimum: number; // e.g. 0.0
+  maximum: number; // e.g. 500.0
+  higher_is_worse: boolean;
+  unit: string; // "ms", "ratio"
+}
+
+export interface ExperimentCandidate {
+  experiment_id: string; // e.g. "exp_002"
+  values: Record<string, number>; // {"sensor.camera.latency_ms": 500.0}
+  phase: ExperimentPhase;
+  rationale: string;
+  parent_experiment_ids: string[];
+}
+
+export interface ExperimentOutcome {
+  passed: boolean;
+  violation_count: number;
+  min_clearance: number;
+  trace_hash: string;
+  details: {
+    run_id?: string;
+    status?: string;
+    controller_health?: string;
+    task_completed?: boolean;
+    execution_error?: string;
+    execution_stage?: string;
+    metrics?: Record<string, any>;
+  };
+}
+
+export interface EvidenceSignal {
+  name: string; // "min_clearance", "hardware.cpu_utilization", etc.
+  value: number;
+  unit: string;
+  sim_time: number;
+  frame_index: number;
+  step: number;
+  source: string;
+}
+
+export interface EvidenceLink {
+  event_id: string;
+  evaluation_id: string;
+  episode_id: string;
+  event_type: string;
+  source: string;
+  sim_time: number;
+  severity: string;
+  wall_time: number;
+  payload: Record<string, any>;
+}
+
+export interface EvidenceSnapshot {
+  run_id: string;
+  trace_hash: string;
+  signals: EvidenceSignal[];
+  event_links: EvidenceLink[];
+}
+
+export interface DecisionTrace {
+  experiment_id: string;
+  phase: ExperimentPhase;
+  action: string; // "ESTABLISH_BASELINE", "TEST_SINGLE_DIMENSION", "NARROW_FAILURE_BOUNDARY", "TEST_INTERACTION"
+  pre_execution_hypothesis_ids: string[];
+  post_observation_hypothesis_ids: string[];
+  refuted_hypothesis_ids: string[];
+  post_observation_leading_hypothesis_id: string | null;
+  information_gain_estimate: number; // 0.5 to 1.0
+  outcome_classification: "PASS" | "SAFETY_VIOLATION" | "RUN_FAILURE" | "CONTROLLER_UNHEALTHY" | "TASK_INCOMPLETE" | "EXECUTION_ERROR" | "UNCLASSIFIED_FAILURE";
+  observation: string;
+  rationale: string;
+  next_experiment_id: string | null;
+  next_action: string;
+}
+
+export interface Hypothesis {
+  hypothesis_id: string; // e.g. "H-sensor_camera_latency_ms"
+  statement: string;
+  variables: string[];
+  supporting_experiment_ids: string[];
+  contradicting_experiment_ids: string[];
+  confidence: number; // 0.0 to 1.0
+  predicted_outcome: string;
+  status: HypothesisStatus;
+}
+
+export interface FalsificationPlan {
+  hypothesis_id: string;
+  values: Record<string, number>;
+  rationale: string;
+  expected_outcome: string;
+}
+
+export interface InvestigationRun {
+  evaluation_id: string;
+  experiment: ExperimentCandidate;
+  outcome: ExperimentOutcome;
+  evidence: EvidenceSnapshot | null;
+  decision_trace: DecisionTrace | null;
+}
+
+export interface InvestigationResult {
+  investigation_id: string;
+  objective: string;
+  scenario_id: string;
+  hardware_preset_id: string;
+  seed: number;
+  status: InvestigationStatus;
+  run_limit: number | null;
+  runs: InvestigationRun[];
+  planner: {
+    budget: number;
+    remaining_budget: number;
+    seed: number;
+    pending_experiment: ExperimentCandidate | null;
+    summary: {
+      total_experiments: number;
+      passed_experiments: number;
+      failed_experiments: number;
+      tested_dimensions: string[];
+      unproven_dimensions: string[];
+    };
+  };
+  evidence: {
+    total_experiments: number;
+    passed_experiments: number;
+    failed_experiments: number;
+    tested_dimensions: string[];
+    unproven_dimensions: string[];
+  };
+  hypotheses: {
+    hypotheses: Hypothesis[];
+  };
+  falsification_plans: FalsificationPlan[];
+  decision_trace: DecisionTrace[];
+}
 ```
 
 ---
 
-## 4. Complete REST API Catalog
+## 5. Complete REST API Catalog
 
 All endpoints are hosted under `http://localhost:8000`.
 
-### 4.1. Hardware Presets Endpoint
+### 5.1. Hardware Presets Endpoint
 - **Method:** `GET`
 - **URL:** `/api/harness/hardware-presets`
-- **Description:** Returns the catalog of supported virtual edge boards. Use this to populate hardware profile selector dropdowns in the UI.
+- **Description:** Returns the catalog of supported virtual edge boards. Use this to populate hardware profile selectors.
 - **Response Format:**
 ```json
 [
@@ -534,7 +745,7 @@ All endpoints are hosted under `http://localhost:8000`.
 
 ---
 
-### 4.2. Scenarios Endpoint
+### 5.2. Scenarios Endpoint
 - **Method:** `GET`
 - **URL:** `/api/scenarios/`
 - **Description:** Lists all registered scenario templates and world obstacle definitions.
@@ -566,7 +777,7 @@ All endpoints are hosted under `http://localhost:8000`.
 
 ---
 
-### 4.3. One-Click End-to-End Closed Loop Evaluation
+### 5.3. One-Click Closed Loop Evaluation (`/api/harness/evaluate-full`)
 - **Method:** `POST`
 - **URL:** `/api/harness/evaluate-full`
 - **Description:** Runs the entire System 2 lifecycle in a single call: Baseline Simulation $\to$ Causal Failure Analysis $\to$ Auto-Code Patcher $\to$ Verification Run $\to$ 3-Pillar Certification Matrix.
@@ -584,8 +795,7 @@ All endpoints are hosted under `http://localhost:8000`.
 
 ---
 
-### 4.4. Step-by-Step Interactive REST Pipeline
-For step-by-step wizard UI or interactive human-in-the-loop review:
+### 5.4. Interactive Step-by-Step REST Pipeline
 
 | Step | Method | URL | Payload Body | Returned Payload |
 |---|---|---|---|---|
@@ -597,25 +807,144 @@ For step-by-step wizard UI or interactive human-in-the-loop review:
 
 ---
 
-### 4.5. Deterministic Replay Verification Endpoint
+## 6. Autonomous Investigator API Contract (`/api/harness/investigations`)
+
+This endpoint lets System 2 execute autonomous hypothesis-driven scientific investigations across declared perturbation dimensions.
+
 - **Method:** `POST`
-- **URL:** `/api/scenarios/replay/{run_id}`
-- **Description:** Replays a simulation episode under the exact same seed, verifies trace hash bit-exactness, and returns difference details if any non-determinism occurred.
-- **Response Format:**
+- **URL:** `/api/harness/investigations`
+- **Request Body (`InvestigationPayload`):**
 ```json
 {
-  "replayed_manifest": { ... },
-  "is_bit_exact_match": true,
-  "original_trace_hash": "a4f891b2c3d4e5f6...",
-  "replayed_trace_hash": "a4f891b2c3d4e5f6...",
-  "difference_details": null,
-  "frames": [ ... ]
+  "objective": "Investigate vehicle safety boundary under camera frame latency and compute degradation",
+  "hardware_preset_id": "RDK_X5",
+  "scenario_id": "showcase_normal_baseline",
+  "controller_code": null,
+  "seed": 1337,
+  "budget": 12,
+  "max_boundary_steps": 3
+}
+```
+- **Response Format (`InvestigationResult`):**
+```json
+{
+  "investigation_id": "investigation_3a91bc7d",
+  "objective": "Investigate vehicle safety boundary under camera frame latency and compute degradation",
+  "scenario_id": "showcase_normal_baseline",
+  "hardware_preset_id": "RDK_X5",
+  "seed": 1337,
+  "status": "COMPLETE",
+  "run_limit": null,
+  "runs": [
+    {
+      "evaluation_id": "eval_89ab12cd",
+      "experiment": {
+        "experiment_id": "exp_001",
+        "values": {
+          "sensor.camera.latency_ms": 0.0,
+          "hardware.compute.availability": 1.0,
+          "actuator.brake.effectiveness": 1.0
+        },
+        "phase": "BASELINE",
+        "rationale": "Measure healthy behavior before applying perturbations.",
+        "parent_experiment_ids": []
+      },
+      "outcome": {
+        "passed": true,
+        "violation_count": 0,
+        "min_clearance": 1.84,
+        "trace_hash": "a4f891b2...",
+        "details": { "status": "COMPLETED", "controller_health": "HEALTHY" }
+      },
+      "evidence": {
+        "run_id": "run_01_baseline",
+        "trace_hash": "a4f891b2...",
+        "signals": [
+          { "name": "min_clearance", "value": 1.84, "unit": "m", "sim_time": 4.12, "frame_index": 412, "step": 412, "source": "safety.oracle" }
+        ],
+        "event_links": []
+      },
+      "decision_trace": {
+        "experiment_id": "exp_001",
+        "phase": "BASELINE",
+        "action": "ESTABLISH_BASELINE",
+        "pre_execution_hypothesis_ids": [],
+        "post_observation_hypothesis_ids": [],
+        "refuted_hypothesis_ids": [],
+        "post_observation_leading_hypothesis_id": null,
+        "information_gain_estimate": 0.5,
+        "outcome_classification": "PASS",
+        "observation": "System 1 reported a passing run.",
+        "rationale": "Measure healthy behavior before applying perturbations.",
+        "next_experiment_id": "exp_002",
+        "next_action": "SCHEDULED: run exp_002 (SCREEN) - Screen adverse endpoint of 'sensor.camera.latency_ms'."
+      }
+    }
+  ],
+  "planner": {
+    "budget": 12,
+    "remaining_budget": 8,
+    "seed": 1337,
+    "pending_experiment": null,
+    "summary": {
+      "total_experiments": 4,
+      "passed_experiments": 2,
+      "failed_experiments": 2,
+      "tested_dimensions": ["actuator.brake.effectiveness", "hardware.compute.availability", "sensor.camera.latency_ms"],
+      "unproven_dimensions": []
+    }
+  },
+  "hypotheses": {
+    "hypotheses": [
+      {
+        "hypothesis_id": "H-sensor_camera_latency_ms",
+        "statement": "Failure is caused by degradation in sensor.camera.latency_ms.",
+        "variables": ["sensor.camera.latency_ms"],
+        "supporting_experiment_ids": ["exp_002"],
+        "contradicting_experiment_ids": ["exp_003"],
+        "confidence": 0.75,
+        "predicted_outcome": "Restoring sensor.camera.latency_ms should remove the failure.",
+        "status": "SUPPORTED"
+      }
+    ]
+  },
+  "falsification_plans": [
+    {
+      "hypothesis_id": "H-sensor_camera_latency_ms",
+      "values": {
+        "sensor.camera.latency_ms": 0.0,
+        "hardware.compute.availability": 0.5,
+        "actuator.brake.effectiveness": 1.0
+      },
+      "rationale": "Falsify H-sensor_camera_latency_ms by restoring 'sensor.camera.latency_ms' while holding other conditions constant.",
+      "expected_outcome": "A safe result would support H-sensor_camera_latency_ms; a failure would weaken it or indicate another cause."
+    }
+  ],
+  "decision_trace": [ ... ]
 }
 ```
 
 ---
 
-## 5. WebSocket Real-Time Live Streaming Contract
+## 7. MCP Canonical Tools Catalog
+
+For IDE plugins, agentic assistants, and MCP clients (`mcp_server/server.py`):
+
+| MCP Tool Name | Description | Key Arguments |
+|---|---|---|
+| `list_hardware_profiles` | List all supported virtual edge boards (RDK X5, Jetson Orin Nano, Pi 5). | *None* |
+| `inspect_scenario` | Inspect world layout, goal, obstacles, and default faults. | `scenario_id` (string) |
+| `inspect_safety_policy` | Inspect invariant thresholds (clearance min, speed max, age max). | `policy_id` (string, default "default") |
+| `create_experiment` | Initialize an evaluation experiment binding hardware, scenario, code, seed. | `hardware_preset_id`, `scenario_id`, `seed` |
+| `run_experiment` | Execute baseline simulation run and capture telemetry frames. | `evaluation_id` (string) |
+| `diagnose_failure` | Build causal failure DAG and identify primary root cause. | `evaluation_id` (string) |
+| `auto_patch_controller` | Synthesize AST-hardened fail-safe Python controller guards. | `original_code`, `evaluation_id` |
+| `verify_patch` | Re-run simulation on identical seed to verify patch safety. | `evaluation_id`, `patched_code` |
+| **`investigate_reliability`** | **Autonomously choose and run budgeted experiments (Screen/Boundary/Interaction).** | `objective`, `budget`, `seed`, `max_boundary_steps` |
+
+---
+
+## 8. WebSocket Real-Time Live Streaming Contract
 
 - **WebSocket URL:** `ws://localhost:8000/ws/live/{scenario_id}`
 - **Protocols:** Standard W3C WebSocket (`new WebSocket(...)`).
@@ -674,40 +1003,40 @@ sequenceDiagram
 
 ---
 
-## 6. 2D Canvas Visualizer Coordinate System & Rendering Specs
+## 9. 2D Canvas Visualizer Coordinate System & Rendering Specs
 
-### 6.1. Physics Coordinate System (World Coordinates)
+### 9.1. Physics Coordinate System (World Coordinates)
 - **Origin $(0,0)$:** Bottom-Left corner of the arena.
 - **$+X$ Axis:** Points **East** (Right).
 - **$+Y$ Axis:** Points **North** (Up).
-- **Heading Angle $\theta$:** Radians, counter-clockwise from $+X$ (e.g. $0 = \text{East}$, $\pi/2 \approx 1.57 = \text{North}$, $\pi \approx 3.14 = \text{West}$, $-\pi/2 \approx -1.57 = \text{South}$).
+- **Heading Angle $\theta$:** Radians, counter-clockwise from $+X$ ($0 = \text{East}$, $\pi/2 \approx 1.57 = \text{North}$, $\pi \approx 3.14 = \text{West}$, $-\pi/2 \approx -1.57 = \text{South}$).
 - **Standard Arena Size:** `world.width = 50.0m`, `world.height = 50.0m`.
 
-### 6.2. Canvas Transformation Equations
-Since HTML5 `<canvas>` has $(0,0)$ at the **Top-Left** with $+Y$ pointing downward, convert all coordinates as follows:
+### 9.2. Canvas Transformation Equations
+Since HTML5 `<canvas>` has $(0,0)$ at the **Top-Left** with $+Y$ pointing downward:
 
 ```typescript
-const scale = canvas.width / scenario.world.width; // pixels per meter (e.g., 800px / 50m = 16 px/m)
+const scale = canvas.width / (scenario.world?.width || 50.0); // e.g. 600px / 50m = 12 px/m
 
 function worldToCanvas(worldX: number, worldY: number): { x: number; y: number } {
   return {
     x: worldX * scale,
-    y: canvas.height - (worldY * scale) // Flip Y
+    y: canvas.height - (worldY * scale) // Invert Y
   };
 }
 ```
 
-### 6.3. Layer-by-Layer Canvas Drawing Pipeline
-Implement your render loop in the following order:
+### 9.3. Layer-by-Layer Canvas Drawing Pipeline
 
 ```typescript
 function renderFrame(ctx: CanvasRenderingContext2D, frame: TelemetryFrame, scenario: ScenarioDefinition) {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
-  const scale = w / scenario.world.width;
+  const arenaWidth = scenario.world?.width || 50.0;
+  const scale = w / arenaWidth;
 
   // 1. Clear Arena Background
-  ctx.fillStyle = "#090d16"; // Dark slate
+  ctx.fillStyle = "#090d16";
   ctx.fillRect(0, 0, w, h);
 
   // 2. Draw 5-meter Reference Grid
@@ -722,15 +1051,16 @@ function renderFrame(ctx: CanvasRenderingContext2D, frame: TelemetryFrame, scena
   }
 
   // 3. Draw Goal Point
-  const goal = worldToCanvas(scenario.world.goal[0], scenario.world.goal[1]);
+  const goalCoords = scenario.world?.goal || [40.0, 25.0];
+  const goal = worldToCanvas(goalCoords[0], goalCoords[1]);
   ctx.fillStyle = "#fbbf24"; // Amber-400
   ctx.beginPath(); ctx.arc(goal.x, goal.y, 8, 0, 2 * Math.PI); ctx.fill();
   ctx.strokeStyle = "rgba(251, 191, 36, 0.3)";
   ctx.lineWidth = 4;
   ctx.beginPath(); ctx.arc(goal.x, goal.y, 14, 0, 2 * Math.PI); ctx.stroke();
 
-  // 4. Draw Static Obstacles (AABB Boxes)
-  scenario.world.obstacles.filter(o => o.type !== "dynamic").forEach(obs => {
+  // 4. Draw Static Obstacles
+  scenario.world?.obstacles?.filter(o => o.type !== "dynamic").forEach(obs => {
     const pt = worldToCanvas(obs.x, obs.y);
     const ow = (obs.length || 1.5) * scale;
     const oh = (obs.width || 1.5) * scale;
@@ -740,46 +1070,43 @@ function renderFrame(ctx: CanvasRenderingContext2D, frame: TelemetryFrame, scena
     ctx.strokeRect(pt.x - ow / 2, pt.y - oh / 2, ow, oh);
   });
 
-  // 5. Draw Dynamic Obstacles (Pedestrians/Vehicles)
-  frame.dynamic_obstacles.forEach(dyn => {
+  // 5. Draw Dynamic Obstacles
+  frame.dynamic_obstacles?.forEach(dyn => {
     const pt = worldToCanvas(dyn.x, dyn.y);
     ctx.fillStyle = "#f43f5e"; // Rose-500
     ctx.beginPath(); ctx.arc(pt.x, pt.y, 7, 0, 2 * Math.PI); ctx.fill();
     ctx.strokeStyle = "#fda4af"; ctx.lineWidth = 2; ctx.stroke();
 
-    // ID Tag
     ctx.fillStyle = "#cbd5e1";
     ctx.font = "10px monospace";
     ctx.fillText(dyn.id, pt.x - 15, pt.y - 12);
   });
 
-  // 6. Draw Ego Vehicle (Rover) with Orientation
+  // 6. Draw Rover with Orientation & Clearance Halo
   const egoPt = worldToCanvas(frame.vehicle_state.x, frame.vehicle_state.y);
-  const canvasHeading = -frame.vehicle_state.heading; // Inverted for canvas
+  const canvasHeading = -frame.vehicle_state.heading; // Negate for inverted canvas Y
 
   ctx.save();
   ctx.translate(egoPt.x, egoPt.y);
   ctx.rotate(canvasHeading);
 
-  // Clearance Halo (Green if safe, Red if clearance breached)
-  const isBreached = frame.min_clearance < 0.8;
+  const isBreached = frame.min_clearance < (scenario.safety_thresholds?.min_clearance || 0.8);
   ctx.strokeStyle = isBreached ? "rgba(244, 63, 94, 0.6)" : "rgba(59, 130, 246, 0.25)";
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(0, 0, Math.max(frame.min_clearance, 0.8) * scale, 0, 2 * Math.PI);
   ctx.stroke();
 
-  // Vehicle Body (1.4m length x 0.9m width)
   const vLength = 1.4 * scale;
   const vWidth = 0.9 * scale;
-  ctx.fillStyle = isBreached ? "#e11d48" : "#4f46e5"; // Indigo / Crimson
+  ctx.fillStyle = isBreached ? "#e11d48" : "#4f46e5";
   ctx.fillRect(-vLength / 2, -vWidth / 2, vLength, vWidth);
   ctx.strokeStyle = "#a5b4fc";
   ctx.lineWidth = 2;
   ctx.strokeRect(-vLength / 2, -vWidth / 2, vLength, vWidth);
 
-  // Forward Nose Pointer
-  ctx.strokeStyle = "#38bdf8"; // Sky-400
+  // Nose Pointer
+  ctx.strokeStyle = "#38bdf8";
   ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(vLength / 2 + 8, 0); ctx.stroke();
 
@@ -789,9 +1116,7 @@ function renderFrame(ctx: CanvasRenderingContext2D, frame: TelemetryFrame, scena
 
 ---
 
-## 7. Client-Side Playback & Scrubber Engine Implementation
-
-Here is the complete, self-contained Playback Controller class for your visualizer component:
+## 10. Client-Side Playback & Scrubber Engine Implementation
 
 ```typescript
 export class SimulationPlaybackEngine {
@@ -870,42 +1195,53 @@ export class SimulationPlaybackEngine {
 
 ---
 
-## 8. Causal DAG Graph Rendering Spec
+## 11. Causal DAG Graph Rendering Spec
 
-When the user navigates to the **Diagnostics Tab**, render `CausalDiagnosticReport.causal_nodes` and `causal_links` using a graph library such as **React Flow**, **Cytoscape.js**, or **Mermaid.js**.
+When rendering `CausalDiagnosticReport.causal_nodes` and `causal_links` (using React Flow, Cytoscape, or Mermaid.js):
 
 ### Node Categories & Palette
 | Category | Color Code | Icon | Description |
 |---|---|---|---|
-| `HARDWARE_FAULT` | `#f59e0b` (Amber) | ⚠️ | Perturbations injected into sensors, SoC, or buses |
-| `COMPUTE_BOTTLENECK` | `#ef4444` (Red) | ⚡ | Thermal throttling, deadline misses, CPU load |
-| `TRANSPORT_STALENESS` | `#8b5cf6` (Purple) | ⏱️ | Delayed observation delivery ($>200\text{ms}$) |
-| `CONTROLLER_DECISION` | `#3b82f6` (Blue) | 🧠 | Control action taken on outdated/degraded state |
-| `SAFETY_BREACH` | `#dc2626` (Crimson) | 💥 | Physical boundary or stopping distance violation |
-
-### Link Attributes
-- **Edge Label:** `relation` (e.g. `INDUCED_THERMAL_LOAD`, `TRANSPORT_OR_PROCESSING_DELAY`, `INSUFFICIENT_STOPPING_MARGIN`).
-- **Confidence Badge:** `confidence` (e.g., `95% Confidence`).
-- **Edge Tooltip:** Displays the `evidence` object (e.g., `{ observation_age_s: 0.41, clearance: 0.0 }`).
+| `HARDWARE_FAULT` | `#f59e0b` (Amber) | ⚠️ | Injected faults (latency, frame drop, packet jitter) |
+| `COMPUTE_BOTTLENECK` | `#ef4444` (Red) | ⚡ | Thermal throttling, deadline misses, CPU saturation |
+| `TRANSPORT_STALENESS` | `#8b5cf6` (Purple) | ⏱️ | Observation delivery delay ($>200\text{ms}$) |
+| `CONTROLLER_DECISION` | `#3b82f6` (Blue) | 🧠 | Actuator command computed on stale state |
+| `SAFETY_BREACH` | `#dc2626` (Crimson) | 💥 | Collision or minimum clearance violation |
 
 ---
 
-## 9. Code Patch Diff & Provenance Component
+## 12. Autonomous Hypothesis & Decision Trace UI Components
+
+When rendering `InvestigationResult` from `/api/harness/investigations`:
+
+### 12.1. Competing Hypothesis Board
+- Group hypotheses by status: `SUPPORTED` (Green border), `ACTIVE` (Blue border), `REFUTED` (Muted/Strikethrough).
+- Display confidence score bar ($0.0 \to 1.0$) with links to supporting (`exp_002`) and contradicting (`exp_003`) experiment cards.
+- Show **Counterfactual Falsification Card** with expected outcome.
+
+### 12.2. Safe Decision Trace Audit Timeline
+- Render each step in `decision_trace`:
+  - **Action Badge:** `ESTABLISH_BASELINE` (Slate), `TEST_SINGLE_DIMENSION` (Amber), `NARROW_FAILURE_BOUNDARY` (Emerald), `TEST_INTERACTION` (Indigo).
+  - **Outcome Classification:** `PASS` vs `SAFETY_VIOLATION` vs `CONTROLLER_UNHEALTHY`.
+  - **Information Gain Badge:** e.g. `+0.80 Information Value`.
+  - **Planner Rationale & Next Action Preview:** Showing monotonic progression without leaking sensitive model thoughts.
+
+---
+
+## 13. Code Patch Diff & Provenance Component
 
 When rendering `HarnessEvaluation.patch`:
-
 1. **Unified Diff Viewer:**
-   - Use `@monaco-editor/react` or `react-diff-viewer-continued` with `patch.unified_diff` or `original_code` vs `patched_code`.
+   - Use Monaco Editor or `react-diff-viewer-continued` with `patch.unified_diff` or `original_code` vs `patched_code`.
 2. **Provenance Audit Card:**
-   - Display `patch.provenance`:
-     - **Source SHA-256:** `patch.provenance.source_controller_hash.substring(0, 16)}...`
-     - **Diagnostic Ref:** `patch.provenance.diagnostic_report_id`
-     - **Strategies Applied:** Badges for each strategy (e.g. `DYNAMIC_STOPPING_BUFFER`, `STALE_SENSOR_FAIL_SAFE`).
-     - **Rationale:** `patch.provenance.rationale`.
+   - **Source SHA-256:** `patch.provenance.source_controller_hash.substring(0, 16)}...`
+   - **Diagnostic Ref:** `patch.provenance.diagnostic_report_id`
+   - **Strategies Applied:** Badges for `DYNAMIC_STOPPING_BUFFER`, `STALE_SENSOR_FAIL_SAFE`, etc.
+   - **Rationale:** `patch.provenance.rationale`.
 
 ---
 
-## 10. 3-Pillar Verification Matrix & Certification Badge
+## 14. 3-Pillar Verification Matrix & Certification Badge
 
 When `HarnessEvaluation.final_result` is available, render the **3-Pillar Gate**:
 
@@ -929,19 +1265,19 @@ When `HarnessEvaluation.final_result` is available, render the **3-Pillar Gate**
 
 ---
 
-## 11. Deterministic Replay & Hash Auditing
+## 15. Deterministic Replay & Hash Auditing
 
 When the user clicks **"Verify Replay"** on any completed simulation run:
 1. Call `POST /api/scenarios/replay/{run_id}`.
 2. If `data.is_bit_exact_match === true`:
-   - Display a verified shield badge: `✅ 100% Bit-Exact Determinism Match`.
+   - Display verified badge: `✅ 100% Bit-Exact Determinism Match`.
    - Display `original_trace_hash` vs `replayed_trace_hash`.
 3. If `false`:
    - Display alert banner with `data.difference_details`.
 
 ---
 
-## 12. Common Gotchas & Troubleshooting
+## 16. Common Gotchas & Troubleshooting
 
 | Issue | Root Cause | Solution |
 |---|---|---|
@@ -949,7 +1285,7 @@ When the user clicks **"Verify Replay"** on any completed simulation run:
 | **Scrubber animation lags on low-end machines** | Re-rendering heavy DOM metrics on every single frame. | Throttle DOM metrics updates to 10 Hz (every 5th frame) while keeping the `<canvas>` draw at 50 Hz. |
 | **CORS errors when calling API** | Frontend running on port 3000/5173 while FastAPI runs on 8000. | The backend has `allow_origins=["*"]` configured. Ensure requests point to `http://localhost:8000`. |
 | **WebSocket disconnects immediately** | Invalid or misspelled `scenario_id`. | Confirm the `scenario_id` exists in `/api/scenarios/` before initiating the WebSocket connection. |
-| **JSON payload memory consumption** | Storing multiple 3000-frame runs simultaneously in Vue/React state. | Keep only the active baseline and verification runs in memory; garbage collect previous evaluations. |
+| **JSON payload memory consumption** | Storing multiple 3000-frame runs simultaneously in state. | Keep only active baseline and verification runs in memory; garbage collect previous evaluations. |
 
 ---
 
