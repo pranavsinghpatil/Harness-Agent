@@ -19,6 +19,8 @@ Every code review and resolution document is clearly prefixed and linked to its 
 
 | Pull Request | Scope | Findings Catalog | Remediation & Resolution | Status |
 | :--- | :--- | :--- | :--- | :--- |
+| [**PR #21 (Round 1)**](https://github.com/pranavsinghpatil/Harness-Agent/pull/21) | Async investigation event delivery | [`pr21_review_findings_round1.md`](./pr21_review_findings_round1.md) | Clean review; no remediation required | ✅ **Verified (1 test passed)** |
+| [**PR #22 (Round 1)**](https://github.com/pranavsinghpatil/Harness-Agent/pull/22) | Investigation repair close loop | [`pr22_review_findings_round1.md`](./pr22_review_findings_round1.md) | Clean review; no remediation required | ✅ **Verified (100 tests passed)** |
 | [**PR #2 (Round 1)**](https://github.com/pranavsinghpatil/Harness-Agent/pull/2) | Virtual Hardware Simulation Sandbox | [`pr2_review_findings.md`](./pr2_review_findings.md) | [**`pr2_resolution.md`**](./pr2_resolution.md) | ✅ **100% Resolved & Verified** (26/26 Tests Passed) |
 | [**PR #2 (Round 2)**](https://github.com/pranavsinghpatil/Harness-Agent/pull/2) | Sandbox Edge Cases & Governance | [`pr2_review_findings.md`](./pr2_review_findings.md) | [**`pr2_round2_resolution.md`**](./pr2_round2_resolution.md) | ✅ **100% Resolved & Verified** (28/28 Tests Passed) |
 | [**PR #5**](https://github.com/pranavsinghpatil/Harness-Agent/pull/5) | Qodo Round 2 Remediation PR | [**`pr5_review_findings.md`**](./pr5_review_findings.md) | `pr5_resolution.md` | 🔍 **Review Documented (13 Findings)** |
