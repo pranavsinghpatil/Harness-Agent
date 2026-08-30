@@ -42,3 +42,10 @@ unlinked scalar.
 
 This keeps scheduler pressure, transport timing, controller decisions, and
 physical actuation distinguishable in the evidence stream used by System 2.
+
+When System 1 runs under an autonomous investigation, each event also carries
+the investigation and experiment identifiers supplied by System 2, together
+with its evaluation, run, and episode identifiers. The investigation session
+forwards these events to both the ordered REST history and the replay/live
+WebSocket stream, preserving one trace across planning, execution, and
+evidence capture.

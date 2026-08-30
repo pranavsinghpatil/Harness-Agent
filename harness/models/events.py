@@ -77,6 +77,8 @@ class HarnessEvent:
         payload: Event-specific metadata dictionary.
         event_id: Unique event identifier.
         wall_time: System wall clock UNIX timestamp in seconds.
+        investigation_id: Stable autonomous investigation identifier.
+        experiment_id: Planner experiment identifier when the event belongs to an experiment.
     """
     evaluation_id: str
     run_id: str
@@ -86,9 +88,10 @@ class HarnessEvent:
     type: HarnessEventType
     severity: EventSeverity = EventSeverity.INFO
     payload: Dict[str, Any] = field(default_factory=dict)
-    event_id: str = field(default_factory=lambda: f"evt_{uuid.uuid4().hex[:8]}")
+    event_id: str = field(default_factory=lambda: f"evt_{uuid.uuid4().hex}")
     wall_time: float = field(default_factory=time.time)
     investigation_id: str = ""
+    experiment_id: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize event to a plain dictionary for JSON/WebSocket streaming.
@@ -102,6 +105,7 @@ class HarnessEvent:
             "episode_id": self.episode_id,
             "event_id": self.event_id,
             "investigation_id": self.investigation_id,
+            "experiment_id": self.experiment_id,
             "sim_time": round(self.sim_time, 4),
             "wall_time": self.wall_time,
             "source": self.source,
