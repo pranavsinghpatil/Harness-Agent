@@ -1,26 +1,42 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   HardwarePreset,
   ScenarioDefinition,
-  InvestigationResult,
+  TelemetryFrame,
 } from "../types/simulation";
-import { runInvestigation } from "../lib/api";
+import { useInvestigation } from "../hooks/useInvestigation";
+import { ControlRoomHeader } from "./ControlRoomHeader";
+import { LiveEventStream } from "./LiveEventStream";
+import { HypothesisBoard } from "./HypothesisBoard";
+import { ExperimentGraph } from "./ExperimentGraph";
+import { CausalDAGView } from "./CausalDAGView";
+import { CloseLoopCertification } from "./CloseLoopCertification";
+import { PatchApprovalModal } from "./PatchApprovalModal";
+import { SimulationCanvas } from "./SimulationCanvas";
+import { PlaybackControls } from "./PlaybackControls";
+import { VehicleHUD } from "./VehicleHUD";
+import { HardwareHUD } from "./HardwareHUD";
 
 interface InvestigatorViewProps {
   apiBase: string;
   presets: HardwarePreset[];
   scenarios: ScenarioDefinition[];
+  investigation?: ReturnType<typeof useInvestigation>;
 }
+
+type InspectorTab = "hypotheses" | "experiments" | "causal_dag" | "certification";
 
 export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
   apiBase,
   presets,
   scenarios,
+  investigation: propInvestigation,
 }) => {
+  // Launch parameters
   const [objective, setObjective] = useState<string>(
-    "Investigate vehicle safety boundary under camera latency and compute degradation"
+    "Investigate vehicle safety boundary under camera frame latency and compute degradation"
   );
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
     presets[0]?.id ?? "RDK_X5"
@@ -31,16 +47,98 @@ export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
   const [budget, setBudget] = useState<number>(12);
   const [maxBoundarySteps, setMaxBoundarySteps] = useState<number>(3);
   const [seed, setSeed] = useState<number>(1337);
-  const [isRunning, setIsRunning] = useState<boolean>(false);
-  const [result, setResult] = useState<InvestigationResult | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleRunInvestigation = async () => {
+  // Inspector & Canvas selection state
+  const [activeInspectorTab, setActiveInspectorTab] = useState<InspectorTab>("hypotheses");
+  const [isApprovalModalOpen, setIsApprovalModalOpen] = useState<boolean>(false);
+  const [selectedExperimentId, setSelectedExperimentId] = useState<string | null>(null);
+
+  // Frame Scrubber & Playback state
+  const [currentFrameIdx, setCurrentFrameIdx] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+
+  // Use the reactive investigation hook (or shared instance from page root)
+  const localInvestigation = useInvestigation(propInvestigation ? "" : apiBase);
+  const investigation = propInvestigation || localInvestigation;
+
+  // Auto-open modal on entering AWAITING_APPROVAL phase with a patch
+  const lastAutoOpenedPatchIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (investigation.phase === "AWAITING_APPROVAL" && investigation.patch) {
+      const patchId = investigation.patch.patch_id || "pending_patch";
+      if (lastAutoOpenedPatchIdRef.current !== patchId) {
+        lastAutoOpenedPatchIdRef.current = patchId;
+        setIsApprovalModalOpen(true);
+      }
+    } else if (investigation.phase !== "AWAITING_APPROVAL") {
+      setIsApprovalModalOpen(false);
+      lastAutoOpenedPatchIdRef.current = null;
+    }
+  }, [investigation.phase, investigation.patch]);
+
+  // Auto-switch to Certification tab on investigation completion
+  const hasAutoSwitchedCertRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (investigation.phase === "COMPLETED" || investigation.status === "COMPLETED") {
+      const invId = investigation.investigationId || "completed";
+      if (hasAutoSwitchedCertRef.current !== invId) {
+        hasAutoSwitchedCertRef.current = invId;
+        setActiveInspectorTab("certification");
+      }
+    }
+  }, [investigation.phase, investigation.status, investigation.investigationId]);
+
+  // Derive playback frames directly from store without redundant state
+  const playbackFrames: TelemetryFrame[] =
+    (selectedExperimentId && investigation.allExperimentFrames[selectedExperimentId])
+      ? investigation.allExperimentFrames[selectedExperimentId]
+      : investigation.activeExperimentFrames;
+
+  // Handle Experiment Selection (LIVE vs Historical Replay)
+  const handleSelectExperiment = (expId: string | null) => {
+    setSelectedExperimentId(expId);
+    if (expId) {
+      setCurrentFrameIdx(0);
+      setIsPlaying(true);
+      const run = investigation.runs.find((r) => r.experiment.experiment_id === expId);
+      if (
+        run?.evaluation_id &&
+        (!investigation.allExperimentFrames[expId] || investigation.allExperimentFrames[expId].length === 0)
+      ) {
+        investigation.hydrateExperimentFrames(expId, run.evaluation_id);
+      }
+    } else {
+      setIsPlaying(false);
+      if (investigation.activeExperimentFrames.length > 0) {
+        setCurrentFrameIdx(investigation.activeExperimentFrames.length - 1);
+      }
+    }
+  };
+
+  // Auto-hydrate frames for selected experiment if not yet loaded
+  useEffect(() => {
+    if (!selectedExperimentId) return;
+    if (investigation.allExperimentFrames[selectedExperimentId]?.length > 0) return;
+
+    const run = investigation.runs.find(
+      (r) => r.experiment.experiment_id === selectedExperimentId
+    );
+    if (run?.evaluation_id) {
+      investigation.hydrateExperimentFrames(selectedExperimentId, run.evaluation_id);
+    }
+  }, [
+    selectedExperimentId,
+    investigation,
+  ]);
+
+  // Handle Launch
+  const handleLaunch = async () => {
     if (!objective.trim()) return;
-    setIsRunning(true);
-    setErrorMsg(null);
     try {
-      const data = await runInvestigation(apiBase, {
+      await investigation.start({
         objective: objective.trim(),
         hardware_preset_id: selectedPresetId,
         scenario_id: selectedScenarioId,
@@ -48,348 +146,597 @@ export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
         budget: budget,
         max_boundary_steps: maxBoundarySteps,
       });
-      setResult(data);
-    } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : "Investigation failed");
-    } finally {
-      setIsRunning(false);
+      setSelectedExperimentId(null);
+      setCurrentFrameIdx(0);
+      setIsPlaying(false);
+    } catch (err) {
+      console.error("Failed to launch investigation:", err);
     }
   };
 
+  // High-performance requestAnimationFrame playback ticker
+  useEffect(() => {
+    if (!isPlaying || playbackFrames.length <= 1) return;
+
+    let animId: number;
+    let lastTime = performance.now();
+    let accumulatedFrames = 0;
+
+    const tick = (now: number) => {
+      const dtSeconds = (now - lastTime) / 1000;
+      lastTime = now;
+
+      // 100 Hz physics simulation = 100 frames per simulated second
+      const framesToAdvance = dtSeconds * 100 * playbackSpeed;
+      accumulatedFrames += framesToAdvance;
+
+      if (accumulatedFrames >= 1) {
+        const stepCount = Math.floor(accumulatedFrames);
+        accumulatedFrames -= stepCount;
+
+        setCurrentFrameIdx((prev) => {
+          const next = prev + stepCount;
+          if (next >= playbackFrames.length) {
+            return 0; // loop replay smoothly
+          }
+          return next;
+        });
+      }
+
+      animId = requestAnimationFrame(tick);
+    };
+
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, [isPlaying, playbackFrames.length, playbackSpeed]);
+
+  const isLive = !selectedExperimentId;
+  const effectiveFrameIdx = (isLive && !isPlaying && playbackFrames.length > 0)
+    ? playbackFrames.length - 1
+    : currentFrameIdx;
+
+  const activeFrame: TelemetryFrame | null =
+    playbackFrames[effectiveFrameIdx] ||
+    investigation.latestTelemetry ||
+    null;
+
+  const currentPreset = presets.find((p) => p.id === (investigation.hardwarePresetId || selectedPresetId));
+  const currentScenario = scenarios.find((s) => s.id === (investigation.scenarioId || selectedScenarioId));
+
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Header Banner */}
-      <div className="bg-linear-to-r from-purple-950/80 via-slate-900 to-indigo-950/80 border border-purple-500/30 rounded-2xl p-6 shadow-2xl">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center space-x-2 mb-1">
-              <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono text-[11px] border border-purple-500/40 font-semibold">
-                SYSTEM 2 AUTONOMOUS INVESTIGATOR
-              </span>
-              <span className="text-xs text-slate-400">
-                Scientific Hypothesis Search & Bounded Stress Testing
-              </span>
-            </div>
-            <h2 className="text-xl font-bold text-white tracking-tight">
-              Adaptive Perturbation & Causal Exploration Engine
-            </h2>
-            <p className="text-xs text-slate-300 max-w-2xl mt-1 leading-relaxed">
-              Formulates competing causal hypotheses, schedules bounded System 1 perturbation experiments
-              (Screening $\to$ Boundary Bracketing $\to$ Interaction), and tracks auditable decision traces.
-            </p>
-          </div>
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+      {/* Control Room Hero Header */}
+      <ControlRoomHeader
+        investigationId={investigation.investigationId}
+        status={investigation.status}
+        phase={investigation.phase}
+        objective={investigation.objective || objective}
+        completedExperiments={investigation.completedExperiments}
+        budget={investigation.budget}
+        hardwarePreset={currentPreset}
+        scenario={currentScenario}
+        connectionStatus={investigation.connectionStatus}
+        onNewInvestigationClick={() => investigation.clear()}
+        onApproveClick={() => setIsApprovalModalOpen(true)}
+      />
 
-          <button
-            onClick={handleRunInvestigation}
-            disabled={isRunning}
-            className="py-3 px-6 rounded-xl bg-linear-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 active:opacity-90 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-purple-600/30 transition cursor-pointer"
-          >
-            {isRunning ? (
-              <>
-                <svg
-                  className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8v8z"
-                  />
-                </svg>
-                Investigating (System 2)...
-              </>
-            ) : (
-              <>
-                <svg className="w-4 h-4 text-purple-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                </svg>
-                <span>Launch Autonomous Investigation</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Objective & Constraint Form */}
-        <div className="mt-5 space-y-3 pt-4 border-t border-slate-800/80">
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-              Investigation Objective
-            </label>
-            <input
-              type="text"
-              value={objective}
-              onChange={(e) => setObjective(e.target.value)}
-              placeholder="e.g. Determine failure boundaries under camera latency and CPU throttling"
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-purple-500"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+      {/* Mode A: If no investigation has started, show the New Investigation Launch Form */}
+      {!investigation.investigationId ? (
+        <div className="bg-linear-to-r from-purple-950/80 via-slate-900 to-indigo-950/80 border border-purple-500/30 rounded-2xl p-6 shadow-2xl space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <label className="block text-[11px] text-slate-400 mb-1 font-medium">
-                Hardware Preset
+              <div className="flex items-center space-x-2 mb-1">
+                <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono text-[11px] border border-purple-500/40 font-semibold">
+                  SYSTEM 2 AUTONOMOUS INVESTIGATOR STUDIO
+                </span>
+                <span className="text-xs text-slate-400">
+                  Persistent Closed-Loop Scientific Search
+                </span>
+              </div>
+              <h2 className="text-xl font-bold text-white tracking-tight">
+                Launch Autonomous Reliability Investigation
+              </h2>
+              <p className="text-xs text-slate-300 max-w-2xl mt-1 leading-relaxed">
+                System 2 will formulate competing causal hypotheses, execute bounded System 1 perturbation
+                experiments, stream real-time events over WebSocket, auto-synthesize AST code repairs, and request human approval.
+              </p>
+            </div>
+
+            <button
+              onClick={handleLaunch}
+              disabled={investigation.isLoading || !objective.trim()}
+              className="py-3 px-6 rounded-xl bg-linear-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 active:opacity-90 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-purple-600/30 transition cursor-pointer"
+            >
+              {investigation.isLoading ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  Starting Session (202 Accepted)...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  START INVESTIGATION
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Configuration Form */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-slate-800">
+            {/* Objective Input */}
+            <div className="md:col-span-2">
+              <label className="block text-[11px] text-slate-400 mb-1">
+                Investigation Scientific Objective
+              </label>
+              <textarea
+                value={objective}
+                onChange={(e) => setObjective(e.target.value)}
+                rows={2}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500 font-sans leading-relaxed"
+                placeholder="State the reliability question to investigate..."
+              />
+            </div>
+
+            {/* Target Hardware */}
+            <div>
+              <label className="block text-[11px] text-slate-400 mb-1">
+                Target Edge Hardware Board
               </label>
               <select
                 value={selectedPresetId}
                 onChange={(e) => setSelectedPresetId(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
               >
                 {presets.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name || p.id}
+                    {p.name || p.id} ({p.cpu_cores || 8}c, {p.npu_tops || 10} TOPS)
                   </option>
                 ))}
               </select>
             </div>
 
+            {/* Scenario */}
             <div>
-              <label className="block text-[11px] text-slate-400 mb-1 font-medium">
-                Baseline Scenario
+              <label className="block text-[11px] text-slate-400 mb-1">
+                Baseline Scenario Template
               </label>
               <select
                 value={selectedScenarioId}
                 onChange={(e) => setSelectedScenarioId(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
               >
-                {scenarios.map((sc) => (
-                  <option key={sc.id} value={sc.id}>
-                    {sc.name || sc.id}
+                {scenarios.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name || s.id}
                   </option>
                 ))}
               </select>
             </div>
 
+            {/* Budget */}
             <div>
-              <label className="block text-[11px] text-slate-400 mb-1 font-medium">
-                Experiment Budget ({budget})
+              <label className="block text-[11px] text-slate-400 mb-1">
+                Experiment Budget (Max Runs)
               </label>
               <input
-                type="range"
-                min={2}
-                max={20}
+                type="number"
+                min={1}
+                max={50}
                 value={budget}
-                onChange={(e) => setBudget(parseInt(e.target.value, 10))}
-                className="w-full accent-purple-500"
+                onChange={(e) => setBudget(Number(e.target.value))}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
               />
             </div>
 
+            {/* Boundary Steps */}
             <div>
-              <label className="block text-[11px] text-slate-400 mb-1 font-medium">
-                RNG Seed
+              <label className="block text-[11px] text-slate-400 mb-1">
+                Max Boundary Refinements
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={maxBoundarySteps}
+                onChange={(e) => setMaxBoundarySteps(Number(e.target.value))}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
+              />
+            </div>
+
+            {/* Seed */}
+            <div>
+              <label className="block text-[11px] text-slate-400 mb-1">
+                Deterministic Seed
               </label>
               <input
                 type="number"
                 value={seed}
-                onChange={(e) => setSeed(parseInt(e.target.value, 10) || 0)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-purple-500"
+                onChange={(e) => setSeed(Number(e.target.value))}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
               />
             </div>
           </div>
         </div>
-      </div>
-
-      {errorMsg && (
-        <div className="p-4 rounded-xl bg-rose-950/80 border border-rose-500 text-rose-200 text-xs">
-          <strong>Investigation Error:</strong> {errorMsg}
-        </div>
-      )}
-
-      {/* Results Dashboard */}
-      {result && (
+      ) : (
+        /* Mode B: Live Investigation Control Room Workspace */
         <div className="space-y-6">
-          {/* Summary KPIs */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-lg">
-              <div className="text-[11px] text-slate-400 font-medium">Status</div>
-              <div className="text-lg font-bold text-purple-400 uppercase mt-1">
-                {result.status}
-              </div>
-              <div className="text-[10px] text-slate-500 mt-0.5">
-                ID: {result.investigation_id}
-              </div>
-            </div>
-
-            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-lg">
-              <div className="text-[11px] text-slate-400 font-medium">Experiments Run</div>
-              <div className="text-lg font-bold text-white mt-1">
-                {result.planner?.summary?.total_experiments ?? result.runs?.length ?? 0} / {result.planner?.budget ?? budget}
-              </div>
-              <div className="text-[10px] text-emerald-400 mt-0.5">
-                {result.planner?.summary?.passed_experiments ?? 0} Passed | {result.planner?.summary?.failed_experiments ?? 0} Failed
-              </div>
-            </div>
-
-            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-lg">
-              <div className="text-[11px] text-slate-400 font-medium">Tested Dimensions</div>
-              <div className="text-lg font-bold text-indigo-400 mt-1">
-                {result.planner?.summary?.tested_dimensions?.length ?? 0}
-              </div>
-              <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                {result.planner?.summary?.tested_dimensions?.join(", ") || "None"}
-              </div>
-            </div>
-
-            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 shadow-lg">
-              <div className="text-[11px] text-slate-400 font-medium">Hypotheses Tracked</div>
-              <div className="text-lg font-bold text-cyan-400 mt-1">
-                {result.hypotheses?.hypotheses?.length ?? 0}
-              </div>
-              <div className="text-[10px] text-slate-400 mt-0.5">
-                {result.falsification_plans?.length ?? 0} Counterfactual Plans
-              </div>
-            </div>
-          </div>
-
-          {/* Competing Hypotheses Board */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
-              Competing Causal Hypotheses & Belief States
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {result.hypotheses?.hypotheses?.map((h) => {
-                const isSupported = h.status === "SUPPORTED";
-                const isRefuted = h.status === "REFUTED";
-                return (
-                  <div
-                    key={h.hypothesis_id}
-                    className={`p-4 rounded-xl border transition ${
-                      isSupported
-                        ? "bg-emerald-950/30 border-emerald-500/40"
-                        : isRefuted
-                        ? "bg-rose-950/20 border-rose-500/30 opacity-75"
-                        : "bg-slate-950 border-slate-800"
-                    }`}
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="font-mono text-xs font-bold text-indigo-300">
-                        {h.hypothesis_id}
-                      </span>
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${
-                          isSupported
-                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                            : isRefuted
-                            ? "bg-rose-500/20 text-rose-300 border border-rose-500/40 line-through"
-                            : "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
-                        }`}
-                      >
-                        {h.status}
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-slate-200 mb-3 font-medium">
-                      {h.statement}
-                    </p>
-
-                    {/* Confidence Meter */}
-                    <div className="space-y-1 mb-3">
-                      <div className="flex justify-between text-[10px] text-slate-400">
-                        <span>Confidence Score</span>
-                        <span className="font-mono font-bold text-indigo-300">
-                          {(h.confidence * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                      <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
-                        <div
-                          className={`h-full transition-all duration-500 ${
-                            isSupported
-                              ? "bg-emerald-500"
-                              : isRefuted
-                              ? "bg-rose-500"
-                              : "bg-indigo-500"
-                          }`}
-                          style={{ width: `${Math.round(h.confidence * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="text-[10px] text-slate-400 space-y-1 font-mono">
-                      <div>
-                        Supporting Runs:{" "}
-                        <span className="text-emerald-400">
-                          {h.supporting_experiment_ids?.join(", ") || "None"}
-                        </span>
-                      </div>
-                      <div>
-                        Contradicting Runs:{" "}
-                        <span className="text-rose-400">
-                          {h.contradicting_experiment_ids?.join(", ") || "None"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Decision Trace Timeline */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-purple-400" />
-              Auditable Decision Trace Timeline
-            </h3>
-
-            <div className="space-y-3">
-              {result.decision_trace?.map((trace, idx) => (
-                <div
-                  key={trace.experiment_id || idx}
-                  className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 transition space-y-2"
-                >
-                  <div className="flex flex-wrap justify-between items-center gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-bold text-indigo-400">
-                        {trace.experiment_id}
-                      </span>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
-                        {trace.action}
-                      </span>
-                      <span className="text-[10px] font-mono text-slate-400">
-                        Phase: {trace.phase}
-                      </span>
-                    </div>
-
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${
-                        trace.outcome_classification === "PASS"
-                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                          : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
-                      }`}
-                    >
-                      {trace.outcome_classification}
+          {/* Active Lifecycle Flow Banner */}
+          {investigation.phase === "AWAITING_APPROVAL" && (
+            <div className="bg-linear-to-r from-amber-950/90 via-amber-900/40 to-slate-950 border-2 border-amber-500/70 rounded-2xl p-4 sm:p-5 shadow-2xl shadow-amber-500/10 animate-in fade-in duration-300">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-500/30 text-amber-200 font-mono text-[11px] font-bold border border-amber-500/50 flex items-center gap-1.5 animate-pulse">
+                      <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                      HUMAN-IN-THE-LOOP SAFETY GATE
+                    </span>
+                    <span className="text-xs text-amber-300 font-mono font-semibold">
+                      Patch: {investigation.patch?.patch_id || "patch_auto_01"}
                     </span>
                   </div>
-
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    {trace.rationale}
+                  <h3 className="text-base font-bold text-white tracking-wide">
+                    ⚠️ Safety Fault Detected & Hardened Patch Generated — Human Review Required
+                  </h3>
+                  <p className="text-xs text-amber-200/90 max-w-3xl leading-relaxed">
+                    System 2 formulated an AST code repair addressing the observed failure boundary. Review the proposed diff to authorize dual-run verification and the multi-case regression suite.
                   </p>
+                </div>
 
-                  <div className="pt-2 border-t border-slate-800/80 flex flex-wrap justify-between text-[11px] text-slate-400 font-mono gap-2">
-                    <span>
-                      Observation: <strong className="text-slate-200">{trace.observation}</strong>
-                    </span>
-                    <span className="text-purple-300">
-                      {trace.next_action}
-                    </span>
+                <button
+                  onClick={() => setIsApprovalModalOpen(true)}
+                  className="self-start md:self-center py-2.5 px-6 rounded-xl bg-linear-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 active:opacity-90 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/30 transition cursor-pointer shrink-0 animate-bounce"
+                >
+                  <span className="text-sm">🛡️</span>
+                  <span>Review & Authorize Patch</span>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {investigation.phase === "VERIFYING" && (
+            <div className="bg-linear-to-r from-indigo-950/90 via-blue-900/40 to-slate-950 border border-indigo-500/50 rounded-2xl p-4 shadow-xl animate-in fade-in duration-300">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 flex items-center justify-center font-bold text-base shadow-sm">
+                    🔬
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono text-[10px] font-bold border border-indigo-500/30 animate-pulse">
+                        PHASE: DUAL-RUN VERIFICATION
+                      </span>
+                      <span className="text-xs font-semibold text-white">
+                        Verifying Hardened Controller on Edge Hardware
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-0.5">
+                      Operator authorized repair. Running dual-run comparative verification against the baseline failure counterexample...
+                    </p>
                   </div>
                 </div>
-              ))}
+                <div className="flex items-center gap-2 text-xs font-mono text-indigo-300 shrink-0">
+                  <svg className="animate-spin h-4 w-4 text-indigo-400" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  <span className="hidden sm:inline">Executing SIL Verification...</span>
+                </div>
+              </div>
             </div>
+          )}
+
+          {investigation.phase === "REGRESSING" && (
+            <div className="bg-linear-to-r from-purple-950/90 via-indigo-900/40 to-slate-950 border border-purple-500/50 rounded-2xl p-4 shadow-xl animate-in fade-in duration-300">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center justify-center font-bold text-base shadow-sm">
+                    🔄
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono text-[10px] font-bold border border-purple-500/30 animate-pulse">
+                        PHASE: MULTI-CASE REGRESSION
+                      </span>
+                      <span className="text-xs font-semibold text-white">
+                        Replaying Discovered Perturbation Schedules
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-0.5">
+                      Replaying regression suite across all discovered perturbation schedules to certify zero regression...
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs font-mono text-purple-300 shrink-0">
+                  <svg className="animate-spin h-4 w-4 text-purple-400" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  <span className="hidden sm:inline">Replaying Test Matrix...</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(investigation.phase === "COMPLETED" || investigation.status === "COMPLETED") && (
+            <div className="bg-linear-to-r from-emerald-950/90 via-teal-900/40 to-slate-950 border border-emerald-500/50 rounded-2xl p-4 shadow-xl animate-in fade-in duration-300">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center justify-center font-bold text-base shadow-sm">
+                    🛡️
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-bold border border-emerald-500/30">
+                        PROVEN & CERTIFIED
+                      </span>
+                      <span className="text-xs font-semibold text-white">
+                        Autonomous Reliability Investigation Complete
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-0.5">
+                      Safety invariant proven under latency perturbations. 3-Pillar Certification generated.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setActiveInspectorTab("certification")}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-emerald-600/30"
+                >
+                  <span>View Certificate</span>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {investigation.phase === "PATCH_REJECTED" && (
+            <div className="bg-linear-to-r from-rose-950/90 via-rose-900/40 to-slate-950 border border-rose-500/50 rounded-2xl p-4 shadow-xl animate-in fade-in duration-300">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center justify-center font-bold text-base shadow-sm">
+                  🛑
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono text-[10px] font-bold border border-rose-500/30">
+                      PATCH REJECTED
+                    </span>
+                    <span className="text-xs font-semibold text-white">
+                      Human Reviewer Rejected Proposed Patch
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Investigation session concluded without controller repair. Review decision rationale in certificate tab.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Main Stage Grid: Center Stage Visualizer + Right Inspector Rail */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left / Center Column (7 Cols): 2D Canvas + Scrubber + HUDs */}
+            <div className="lg:col-span-7 space-y-4">
+              {/* Experiment Selector Bar */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Viewing Experiment:
+                  </span>
+                  <select
+                    value={selectedExperimentId || "LIVE"}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      handleSelectExperiment(val === "LIVE" ? null : val);
+                    }}
+                    className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-indigo-300 font-mono focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="LIVE">
+                      🔴 Live Stream (Active Run) {investigation.activeExperimentFrames.length > 0 ? `[${investigation.activeExperimentFrames.length} frames]` : ""}
+                    </option>
+                    {investigation.runs.map((r) => {
+                      const cachedCount = investigation.allExperimentFrames[r.experiment.experiment_id]?.length;
+                      return (
+                        <option key={r.experiment.experiment_id} value={r.experiment.experiment_id}>
+                          {r.experiment.experiment_id} ({r.experiment.phase}) - {r.outcome.passed ? "PASS" : "VIOLATION"} {cachedCount ? `[${cachedCount} frames]` : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2 text-[11px] font-mono">
+                  {selectedExperimentId ? (
+                    <button
+                      onClick={() => handleSelectExperiment(null)}
+                      className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[10px] font-semibold transition cursor-pointer flex items-center gap-1"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                      Back to Live Stream
+                    </button>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-semibold">
+                      Live Mode
+                    </span>
+                  )}
+                  <span className="text-slate-400">
+                    Frames: {playbackFrames.length}
+                  </span>
+                </div>
+              </div>
+
+              {/* 2D Canvas Engine */}
+              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-3 sm:p-4 shadow-2xl relative overflow-hidden flex flex-col items-center justify-center">
+                <SimulationCanvas
+                  currentFrame={activeFrame}
+                  scenario={currentScenario || null}
+                  latestViolation={activeFrame?.new_violations?.[0] || null}
+                  simTime={activeFrame?.sim_time || 0}
+                  simStep={activeFrame?.step || 0}
+                  isLive={!selectedExperimentId}
+                  experimentId={selectedExperimentId || investigation.currentExperiment?.experiment_id || "LIVE"}
+                  experimentPhase={
+                    selectedExperimentId
+                      ? investigation.runs.find((r) => r.experiment.experiment_id === selectedExperimentId)?.experiment.phase
+                      : investigation.currentExperiment?.phase
+                  }
+                  experimentOutcome={
+                    selectedExperimentId
+                      ? (investigation.runs.find((r) => r.experiment.experiment_id === selectedExperimentId)?.outcome.passed ? "PASS" : "VIOLATION")
+                      : null
+                  }
+                  activeFaults={activeFrame?.active_faults}
+                  playbackFrames={playbackFrames}
+                  currentFrameIdx={currentFrameIdx}
+                />
+              </div>
+
+              {/* Scrubber & Playback Controls */}
+              {playbackFrames.length > 0 && (
+                <PlaybackControls
+                  isPlaying={isPlaying}
+                  onPlayPauseToggle={() => setIsPlaying(!isPlaying)}
+                  currentFrameIdx={currentFrameIdx}
+                  totalFrames={playbackFrames.length}
+                  onScrub={(idx: number) => {
+                    setIsPlaying(false);
+                    setCurrentFrameIdx(idx);
+                  }}
+                  playbackSpeed={playbackSpeed}
+                  onSpeedChange={(speed: number) => setPlaybackSpeed(speed)}
+                  currentTime={activeFrame?.sim_time || 0}
+                  totalDuration={playbackFrames[playbackFrames.length - 1]?.sim_time || 12}
+                />
+              )}
+
+              {/* Vehicle & Hardware HUDs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <VehicleHUD frame={activeFrame} />
+                <HardwareHUD
+                  metrics={activeFrame?.hardware_metrics || null}
+                  sensorQueues={activeFrame?.sensor_queue_depths || null}
+                />
+              </div>
+
+            </div>
+
+            {/* Right Column (5 Cols): Inspector Tabs (Hypotheses, Experiment Tree, Causal DAG, Certification) */}
+            <div className="lg:col-span-5 space-y-4">
+              {/* Tab Navigation */}
+              <div className="bg-slate-900 p-1 rounded-xl border border-slate-800 flex items-center justify-between text-xs font-semibold">
+                <button
+                  onClick={() => setActiveInspectorTab("hypotheses")}
+                  className={`flex-1 py-2 rounded-lg transition cursor-pointer ${
+                    activeInspectorTab === "hypotheses"
+                      ? "bg-purple-600 text-white shadow-md"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  🔬 Hypotheses ({investigation.hypotheses.length})
+                </button>
+                <button
+                  onClick={() => setActiveInspectorTab("experiments")}
+                  className={`flex-1 py-2 rounded-lg transition cursor-pointer ${
+                    activeInspectorTab === "experiments"
+                      ? "bg-indigo-600 text-white shadow-md"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  🌳 Graph ({investigation.runs.length})
+                </button>
+                <button
+                  onClick={() => setActiveInspectorTab("causal_dag")}
+                  className={`flex-1 py-2 rounded-lg transition cursor-pointer ${
+                    activeInspectorTab === "causal_dag"
+                      ? "bg-rose-600 text-white shadow-md"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  🔍 Causal DAG
+                </button>
+                <button
+                  onClick={() => setActiveInspectorTab("certification")}
+                  className={`flex-1 py-2 rounded-lg transition cursor-pointer ${
+                    activeInspectorTab === "certification"
+                      ? "bg-emerald-600 text-white shadow-md"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  🛡️ Certificate
+                </button>
+              </div>
+
+              {/* Tab Content Panels */}
+              {activeInspectorTab === "hypotheses" && (
+                <HypothesisBoard
+                  hypotheses={investigation.hypotheses}
+                  falsificationPlans={investigation.falsificationPlans}
+                  activeHypothesis={investigation.activeHypothesis}
+                  leadingHypothesis={investigation.leadingHypothesis}
+                />
+              )}
+
+              {activeInspectorTab === "experiments" && (
+                <ExperimentGraph
+                  runs={investigation.runs}
+                  decisionTraces={investigation.decisionTraces}
+                  selectedExperimentId={selectedExperimentId}
+                  onSelectExperiment={(id) => handleSelectExperiment(id)}
+                />
+              )}
+
+              {activeInspectorTab === "causal_dag" && (
+                <CausalDAGView diagnosis={investigation.diagnosis} />
+              )}
+
+              {activeInspectorTab === "certification" && (
+                <CloseLoopCertification
+                  investigationId={investigation.investigationId}
+                  objective={investigation.objective || objective}
+                  scenarioId={investigation.scenarioId || selectedScenarioId}
+                  hardwarePresetId={investigation.hardwarePresetId || selectedPresetId}
+                  seed={investigation.seed || seed}
+                  leadingHypothesis={investigation.leadingHypothesis}
+                  diagnosis={investigation.diagnosis}
+                  conclusion={investigation.conclusion}
+                  verification={investigation.verification}
+                  regression={investigation.regression}
+                  approval={investigation.approval}
+                  patch={investigation.patch}
+                  runs={investigation.runs}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Bottom Stage: Live Event Stream Log */}
+          <div className="w-full">
+            <LiveEventStream events={investigation.events} />
           </div>
         </div>
       )}
+
+      {/* Human Approval Modal (When phase is AWAITING_APPROVAL) */}
+      <PatchApprovalModal
+        patch={investigation.patch}
+        diagnosis={investigation.diagnosis}
+        leadingHypothesis={investigation.leadingHypothesis}
+        objective={investigation.objective || objective}
+        isOpen={isApprovalModalOpen && investigation.phase === "AWAITING_APPROVAL"}
+        onClose={() => setIsApprovalModalOpen(false)}
+        onApprove={async (decision, reason, token) => {
+          await investigation.approvePatch(decision, reason, token);
+        }}
+      />
     </div>
   );
 };
-

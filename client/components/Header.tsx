@@ -1,25 +1,34 @@
 "use client";
 
 import React, { useState } from "react";
+import { InvestigationPhase, InvestigationSessionStatus } from "../types/simulation";
 
-interface HeaderProps {
+export interface HeaderProps {
   apiBase: string;
   onApiBaseChange: (url: string) => void;
   backendConnected: boolean;
-  simStatusText: string;
-  simStatusClass: string;
-  activeTab: "workbench" | "investigator";
-  onTabChange: (tab: "workbench" | "investigator") => void;
+  activeTab: "investigator" | "debugger";
+  onTabChange: (tab: "investigator" | "debugger") => void;
+  investigationId?: string | null;
+  investigationPhase?: InvestigationPhase | string | null;
+  investigationStatus?: InvestigationSessionStatus | string | null;
+  streamConnectionStatus?: "IDLE" | "CONNECTING" | "OPEN" | "CLOSED" | "ERROR";
+  debuggerStatusText?: string;
+  debuggerStatusClass?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   apiBase,
   onApiBaseChange,
   backendConnected,
-  simStatusText,
-  simStatusClass,
   activeTab,
   onTabChange,
+  investigationId,
+  investigationPhase,
+  investigationStatus,
+  streamConnectionStatus = "IDLE",
+  debuggerStatusText = "READY",
+  debuggerStatusClass = "text-indigo-400",
 }) => {
   const [showConfig, setShowConfig] = useState(false);
   const [tempUrl, setTempUrl] = useState(apiBase);
@@ -29,8 +38,84 @@ export const Header: React.FC<HeaderProps> = ({
     setShowConfig(false);
   };
 
+  const getPhaseBadge = () => {
+    if (!investigationPhase && !investigationStatus) return null;
+
+    if (investigationPhase === "AWAITING_APPROVAL") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+          Awaiting Approval
+        </span>
+      );
+    }
+    if (investigationPhase === "VERIFYING") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 animate-pulse">
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+          Verifying Patch
+        </span>
+      );
+    }
+    if (investigationPhase === "REGRESSING") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/40 animate-pulse">
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span>
+          Regressing
+        </span>
+      );
+    }
+    if (investigationStatus === "COMPLETED" || investigationPhase === "COMPLETED") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          Certified Safe
+        </span>
+      );
+    }
+    if (investigationStatus === "FAILED" || investigationPhase === "FAILED") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+          Failed
+        </span>
+      );
+    }
+    if (investigationPhase === "DIAGNOSING") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+          Diagnosing
+        </span>
+      );
+    }
+    if (investigationPhase === "PATCH_PROPOSED") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+          Patch Proposed
+        </span>
+      );
+    }
+    if (investigationPhase === "INVESTIGATING") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40 animate-pulse">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+          Investigating
+        </span>
+      );
+    }
+
+    return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+        <span className="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+        Standby
+      </span>
+    );
+  };
+
   return (
-    <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50">
+    <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50">
       {/* Brand & Title */}
       <div className="flex items-center space-x-3">
         <div className="w-10 h-10 rounded-xl bg-linear-to-tr from-indigo-600 via-indigo-500 to-purple-600 flex items-center justify-center font-black text-white shadow-lg shadow-indigo-500/25 tracking-wider">
@@ -45,7 +130,7 @@ export const Header: React.FC<HeaderProps> = ({
               v0.2.0
             </span>
           </div>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-400 hidden sm:block">
             Deterministic Hardware Simulation Testbed & Closed-Loop Agent Reliability Harness
           </p>
         </div>
@@ -54,29 +139,81 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Navigation Tabs */}
       <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-medium">
         <button
-          onClick={() => onTabChange("workbench")}
-          className={`px-3.5 py-1.5 rounded-md transition flex items-center gap-1.5 ${
-            activeTab === "workbench"
-              ? "bg-indigo-600 text-white shadow-sm font-semibold"
-              : "text-slate-400 hover:text-slate-200"
-          }`}
-        >
-          <span>⚡ Evaluation Workbench</span>
-        </button>
-        <button
           onClick={() => onTabChange("investigator")}
-          className={`px-3.5 py-1.5 rounded-md transition flex items-center gap-1.5 ${
+          className={`px-3.5 py-1.5 rounded-md transition flex items-center gap-1.5 cursor-pointer ${
             activeTab === "investigator"
               ? "bg-indigo-600 text-white shadow-sm font-semibold"
               : "text-slate-400 hover:text-slate-200"
           }`}
         >
-          <span>🔬 Autonomous Investigator</span>
+          <span>🔬 Investigation Control Room</span>
+        </button>
+        <button
+          onClick={() => onTabChange("debugger")}
+          className={`px-3.5 py-1.5 rounded-md transition flex items-center gap-1.5 cursor-pointer ${
+            activeTab === "debugger"
+              ? "bg-indigo-600 text-white shadow-sm font-semibold"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <span>⚡ Ad-Hoc Evaluation Debugger</span>
         </button>
       </div>
 
       {/* Status Bar & Settings */}
-      <div className="flex items-center space-x-3 text-xs font-mono">
+      <div className="flex flex-wrap items-center space-x-2 sm:space-x-3 text-xs font-mono">
+        {/* Active Investigation Session Badge if available */}
+        {investigationId && (
+          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-950 border border-slate-800 text-[11px] text-slate-300">
+            <span className="text-slate-500">ID:</span>
+            <span className="font-semibold text-indigo-400">{investigationId.substring(0, 16)}</span>
+          </div>
+        )}
+
+        {/* Unified Phase Badge */}
+        {investigationId ? (
+          getPhaseBadge()
+        ) : activeTab === "debugger" ? (
+          <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-slate-800 border border-slate-700">
+            <span className="text-slate-400">Debugger:</span>
+            <span className={`font-semibold uppercase ${debuggerStatusClass}`}>
+              {debuggerStatusText}
+            </span>
+          </div>
+        ) : (
+          getPhaseBadge()
+        )}
+
+        {/* Live WebSocket Stream Indicator */}
+        <div
+          title={
+            streamConnectionStatus === "OPEN"
+              ? "Live WebSocket Stream Connected"
+              : streamConnectionStatus === "CONNECTING"
+              ? "Connecting Stream..."
+              : "Stream Standby"
+          }
+          className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-md bg-slate-800/80 border border-slate-700/80 text-[11px]"
+        >
+          <span
+            className={`w-2 h-2 rounded-full ${
+              streamConnectionStatus === "OPEN"
+                ? "bg-emerald-400 shadow-sm shadow-emerald-400 animate-ping"
+                : streamConnectionStatus === "CONNECTING"
+                ? "bg-amber-400 animate-pulse"
+                : "bg-slate-500"
+            }`}
+          />
+          <span className="text-slate-400 font-sans">
+            {streamConnectionStatus === "OPEN"
+              ? "Stream Live"
+              : streamConnectionStatus === "CONNECTING"
+              ? "Connecting..."
+              : "Stream Standby"}
+          </span>
+        </div>
+
+        {/* API Connection & Config Button */}
         <button
           onClick={() => setShowConfig(!showConfig)}
           title="Configure API Base URL"
@@ -115,13 +252,6 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </svg>
         </button>
-
-        <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-md bg-slate-800 border border-slate-700">
-          <span className="text-slate-400">Status:</span>
-          <span className={`font-semibold uppercase ${simStatusClass}`}>
-            {simStatusText}
-          </span>
-        </div>
       </div>
 
       {/* API Config Popover Modal */}
@@ -134,7 +264,7 @@ export const Header: React.FC<HeaderProps> = ({
               </h3>
               <button
                 onClick={() => setShowConfig(false)}
-                className="text-slate-400 hover:text-white text-xs"
+                className="text-slate-400 hover:text-white text-xs cursor-pointer"
               >
                 ✕
               </button>
@@ -154,13 +284,13 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex justify-end space-x-2">
               <button
                 onClick={() => setShowConfig(false)}
-                className="px-3 py-1.5 rounded bg-slate-800 text-slate-300 text-xs hover:bg-slate-700"
+                className="px-3 py-1.5 rounded bg-slate-800 text-slate-300 text-xs hover:bg-slate-700 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveApi}
-                className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
+                className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer"
               >
                 Save & Connect
               </button>
