@@ -32,6 +32,7 @@ class ActuatorPipeline:
 
         self._queue: list[QueuedCommand] = []
         self._current_applied_cmd = ActuatorCommand()
+        self.applied_commands_this_step: list[ActuatorCommand] = []
         self.cmd_counter: int = 0
 
         # Fault state injection hooks
@@ -63,30 +64,34 @@ class ActuatorPipeline:
         heapq.heappush(self._queue, queued)
         return True
 
-    def step(self, current_sim_time: float) -> ActuatorCommand:
-        """Applies due commands and transforms them with active fault perturbations."""
-        while self._queue and self._queue[0].apply_time <= current_sim_time:
-            self._current_applied_cmd = heapq.heappop(self._queue).cmd
-
-        # Produce effective command factoring in mechanical perturbations
-        effective_cmd = ActuatorCommand(
-            throttle=self._current_applied_cmd.throttle * self.throttle_effectiveness_factor,
-            brake=self._current_applied_cmd.brake * self.brake_effectiveness_factor,
+    def _apply_faults(self, command: ActuatorCommand) -> ActuatorCommand:
+        """Return the physically effective form of one queued command."""
+        return ActuatorCommand(
+            throttle=command.throttle * self.throttle_effectiveness_factor,
+            brake=command.brake * self.brake_effectiveness_factor,
             steering=(
                 self.stuck_steering_angle
                 if self.stuck_steering_angle is not None
-                else self._current_applied_cmd.steering
+                else command.steering
             ),
-            emergency_stop=self._current_applied_cmd.emergency_stop,
-            command_id=self._current_applied_cmd.command_id,
-            sim_sent_time=self._current_applied_cmd.sim_sent_time,
+            emergency_stop=command.emergency_stop,
+            command_id=command.command_id,
+            sim_sent_time=command.sim_sent_time,
         )
 
-        return effective_cmd
+    def step(self, current_sim_time: float) -> ActuatorCommand:
+        """Applies due commands and transforms them with active fault perturbations."""
+        self.applied_commands_this_step = []
+        while self._queue and self._queue[0].apply_time <= current_sim_time:
+            self._current_applied_cmd = heapq.heappop(self._queue).cmd
+            self.applied_commands_this_step.append(self._apply_faults(self._current_applied_cmd))
+
+        return self._apply_faults(self._current_applied_cmd)
 
     def reset(self) -> None:
         self._queue.clear()
         self._current_applied_cmd = ActuatorCommand()
+        self.applied_commands_this_step.clear()
         self.cmd_counter = 0
         self.stuck_steering_angle = None
         self.brake_effectiveness_factor = 1.0
