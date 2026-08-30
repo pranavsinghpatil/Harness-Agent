@@ -14,6 +14,15 @@ from target_agents.reference_agent.agent import ReferenceAutonomousAgent
 router = APIRouter(tags=["websocket"])
 
 
+async def _next_investigation_event(subscription: object) -> object:
+    """Wait for one queued event without blocking the ASGI event loop."""
+    event_queue = getattr(subscription, "queue")
+    try:
+        return await asyncio.to_thread(event_queue.get, True, 30.0)
+    except Empty:
+        return None
+
+
 @router.websocket("/ws/investigations/{investigation_id}")
 async def websocket_investigation_stream(websocket: WebSocket, investigation_id: str) -> None:
     """Stream an investigation's ordered lifecycle events until it reaches a terminal state.
@@ -47,10 +56,8 @@ async def websocket_investigation_stream(websocket: WebSocket, investigation_id:
             return
 
         while True:
-            try:
-                event = subscription.queue.get_nowait()
-            except Empty:
-                await asyncio.sleep(0.1)
+            event = await _next_investigation_event(subscription)
+            if event is None:
                 continue
             await websocket.send_json(event.to_dict())
             if event.type.value in terminal_types:
