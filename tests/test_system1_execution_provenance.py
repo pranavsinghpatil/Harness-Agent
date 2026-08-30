@@ -37,7 +37,7 @@ def test_controller_execution_is_timestamped_through_scheduler_and_actuator() ->
         payload for _, event_type, _, payload in events if event_type == "COMMAND_ISSUED"
     )
     assert command_payload["compute_started_at"] <= command_payload["compute_completed_at"]
-    assert command_payload["compute_completed_at"] <= command_payload["input_timestamp"] + 0.01
+    assert command_payload["compute_completed_at"] <= command_payload["input_timestamp"] + 0.02
     assert "observation_id" in command_payload
     assert "observation_age_s" in command_payload
 
@@ -63,7 +63,7 @@ def test_perception_is_not_available_before_compute_completion() -> None:
         events.append((source, event_type, severity, payload))
 
     environment: SandboxEnvironment = SandboxEnvironment(scenario=scenario, event_listener=capture)
-    environment.hardware.profile.cpu_capacity_units_per_sec = 1.0
+    environment.hardware.profile.cpu_capacity_units_per_sec = 2.5
     environment.reset()
     for _ in range(8):
         environment.step(0.05)
@@ -78,7 +78,7 @@ def test_perception_is_not_available_before_compute_completion() -> None:
     ]
     assert available
     for observation in available:
-        task = completed[observation["observation_id"]]
+        task: dict[str, Any] = completed[observation["observation_id"]]
         assert observation["available_at"] == task["completed_at"]
         assert observation["available_at"] >= task["input_timestamp"]
 

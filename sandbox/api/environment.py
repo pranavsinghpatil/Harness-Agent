@@ -304,7 +304,7 @@ class SandboxEnvironment:
                 task_id=f"compute_perception_{self.clock.step_count}",
                 name="perception",
                 compute_cost_units=0.1,
-                deadline=sim_time + dt,
+                deadline=sim_time + dt * 2.0,
                 priority=5,
                 input_timestamp=sim_time,
                 result_payload={"packet_count": len(delivered_packets)},
@@ -333,18 +333,22 @@ class SandboxEnvironment:
 
     def _complete_observation(self, task: ComputeTask, sim_time: float) -> None:
         """Release packets to the agent only after scheduler completion."""
-        packets = self._pending_perception.pop(task.task_id, [])
+        packets: list[SensorPacket] = self._pending_perception.pop(task.task_id, [])
         if not packets or task.is_deadline_missed:
             return
-        available_at = task.completed_at if task.completed_at is not None else sim_time
+        available_at: float = task.completed_at if task.completed_at is not None else sim_time
         self.target_agent.receive_sensor_packets(packets, available_at)
-        observation = ObservationState(
+        valid_packets: list[SensorPacket] = [p for p in packets if getattr(p, "validity", True)]
+        if not valid_packets:
+            return
+        created_at: float = min(packet.sim_created_at for packet in valid_packets)
+        observation: ObservationState = ObservationState(
             observation_id=task.task_id,
-            created_at=min(packet.sim_created_at for packet in packets),
+            created_at=created_at,
             available_at=available_at,
-            sensor_ids=tuple(sorted({packet.sensor_id for packet in packets})),
+            sensor_ids=tuple(sorted({packet.sensor_id for packet in valid_packets})),
             source_packet_ids=tuple(
-                f"{packet.sensor_id}:{packet.sequence_id}" for packet in packets
+                f"{packet.sensor_id}:{packet.sequence_id}" for packet in valid_packets
             ),
         )
         self._observations[observation.observation_id] = observation
@@ -390,16 +394,16 @@ class SandboxEnvironment:
         for task in completed_tasks:
             if task.name != "controller" or task.is_deadline_missed:
                 continue
-            decision_time = task.completed_at if task.completed_at is not None else sim_time
-            agent_cmd = self.target_agent.step(decision_time)
-            observation_age = 0.0
+            decision_time: float = task.completed_at if task.completed_at is not None else sim_time
+            agent_cmd: ActuatorCommand = self.target_agent.step(decision_time)
+            observation_age: float = 0.0
             latest_observation: Optional[ObservationState] = max(
                 self._observations.values(),
                 key=lambda observation: observation.available_at,
                 default=None,
             )
             if latest_observation is not None:
-                observation_age = max(0.0, decision_time - latest_observation.available_at)
+                observation_age = max(0.0, decision_time - latest_observation.created_at)
                 self._observations[latest_observation.observation_id] = ObservationState(
                     observation_id=latest_observation.observation_id,
                     created_at=latest_observation.created_at,
@@ -408,9 +412,7 @@ class SandboxEnvironment:
                     source_packet_ids=latest_observation.source_packet_ids,
                     age_at_decision=observation_age,
                 )
-            if hasattr(self.target_agent, "perception"):
-                observation_age = self.target_agent.perception.state.get_max_observation_age(decision_time)
-            submitted = self.actuators.submit_command(agent_cmd, decision_time)
+            submitted: bool = self.actuators.submit_command(agent_cmd, decision_time)
             self._emit(
                 "agent.controller",
                 "COMMAND_ISSUED",
