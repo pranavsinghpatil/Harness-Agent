@@ -339,19 +339,37 @@ export const HarnessView: React.FC<HarnessViewProps> = ({
             <div className="grid grid-cols-3 gap-2">
               <div className="bg-slate-950 p-2 rounded border border-slate-800 text-center">
                 <div className="text-[10px] text-slate-400">Safety Pillar</div>
-                <div className="text-xs font-bold text-emerald-400">
+                <div
+                  className={`text-xs font-bold ${
+                    evaluation.final_result?.safety_pillar_passed !== false
+                      ? "text-emerald-400"
+                      : "text-rose-400"
+                  }`}
+                >
                   {evaluation.final_result?.safety_pillar_passed !== false ? "✓ PASS" : "✗ FAIL"}
                 </div>
               </div>
               <div className="bg-slate-950 p-2 rounded border border-slate-800 text-center">
                 <div className="text-[10px] text-slate-400">Behavior Pillar</div>
-                <div className="text-xs font-bold text-emerald-400">
+                <div
+                  className={`text-xs font-bold ${
+                    evaluation.final_result?.behavior_pillar_passed !== false
+                      ? "text-emerald-400"
+                      : "text-rose-400"
+                  }`}
+                >
                   {evaluation.final_result?.behavior_pillar_passed !== false ? "✓ PASS" : "✗ FAIL"}
                 </div>
               </div>
               <div className="bg-slate-950 p-2 rounded border border-slate-800 text-center">
                 <div className="text-[10px] text-slate-400">Health Pillar</div>
-                <div className="text-xs font-bold text-emerald-400">
+                <div
+                  className={`text-xs font-bold ${
+                    evaluation.final_result?.runtime_health_pillar_passed !== false
+                      ? "text-emerald-400"
+                      : "text-rose-400"
+                  }`}
+                >
                   {evaluation.final_result?.runtime_health_pillar_passed !== false ? "✓ PASS" : "✗ FAIL"}
                 </div>
               </div>

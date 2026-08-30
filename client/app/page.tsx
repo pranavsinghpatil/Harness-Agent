@@ -235,52 +235,52 @@ export default function Home() {
   // Switch between Baseline Run and Verified Run on the Canvas Visualizer
   const handleSwitchRunView = (view: "baseline" | "verified") => {
     if (!evaluation) return;
+    const targetRun = view === "baseline" ? evaluation.baseline_run : evaluation.verification_run;
+    if (!targetRun) return;
+
     setActiveRunView(view);
     setIsPlaying(false);
 
-    const targetRun = view === "baseline" ? evaluation.baseline_run : evaluation.verification_run;
-    if (targetRun) {
-      const frames = extractFrames(targetRun.telemetry_frames);
-      setCurrentRunFrames(frames);
-      setCurrentFrameIdx(0);
-      setCurrentManifest({
-        run_id: targetRun.run_id,
-        trace_hash: targetRun.trace_hash,
-        violations_count: targetRun.violations_count,
-        status: targetRun.status,
-        sim_duration_seconds: targetRun.sim_duration_s,
-      });
+    const frames = extractFrames(targetRun.telemetry_frames);
+    setCurrentRunFrames(frames);
+    setCurrentFrameIdx(0);
+    setCurrentManifest({
+      run_id: targetRun.run_id,
+      trace_hash: targetRun.trace_hash,
+      violations_count: targetRun.violations_count,
+      status: targetRun.status,
+      sim_duration_seconds: targetRun.sim_duration_s,
+    });
 
-      const vCount = targetRun.violations_count ?? 0;
-      if (view === "baseline") {
-        const vName = targetRun.violations?.[0]?.rule_name || targetRun.status || "SAFETY_VIOLATION";
-        if (vCount > 0) {
-          setSimStatusText(`BASELINE: ${vName} (${vCount} VIOLATION${vCount > 1 ? "S" : ""})`);
-          setSimStatusClass("text-rose-400 font-bold");
-          if (targetRun.violations?.[0]) {
-            setLatestViolation(targetRun.violations[0]);
-          }
-        } else {
-          setSimStatusText(`BASELINE: ${targetRun.status}`);
-          setSimStatusClass("text-emerald-400 font-bold");
-          setLatestViolation(null);
+    const vCount = targetRun.violations_count ?? 0;
+    if (view === "baseline") {
+      const vName = targetRun.violations?.[0]?.rule_name || targetRun.status || "SAFETY_VIOLATION";
+      if (vCount > 0) {
+        setSimStatusText(`BASELINE: ${vName} (${vCount} VIOLATION${vCount > 1 ? "S" : ""})`);
+        setSimStatusClass("text-rose-400 font-bold");
+        if (targetRun.violations?.[0]) {
+          setLatestViolation(targetRun.violations[0]);
         }
       } else {
-        if (vCount === 0) {
-          setSimStatusText("VERIFIED: SAFE (0 VIOLATIONS)");
-          setSimStatusClass("text-emerald-400 font-bold");
-          setLatestViolation(null);
-        } else {
-          setSimStatusText(`VERIFIED: ${targetRun.status} (${vCount} VIOLATIONS)`);
-          setSimStatusClass("text-rose-400 font-bold");
-          if (targetRun.violations?.[0]) {
-            setLatestViolation(targetRun.violations[0]);
-          }
+        setSimStatusText(`BASELINE: ${targetRun.status}`);
+        setSimStatusClass("text-emerald-400 font-bold");
+        setLatestViolation(null);
+      }
+    } else {
+      if (vCount === 0) {
+        setSimStatusText("VERIFIED: SAFE (0 VIOLATIONS)");
+        setSimStatusClass("text-emerald-400 font-bold");
+        setLatestViolation(null);
+      } else {
+        setSimStatusText(`VERIFIED: ${targetRun.status} (${vCount} VIOLATIONS)`);
+        setSimStatusClass("text-rose-400 font-bold");
+        if (targetRun.violations?.[0]) {
+          setLatestViolation(targetRun.violations[0]);
         }
       }
-
-      setIsPlaying(true);
     }
+
+    setIsPlaying(true);
   };
 
   // 2. Real-Time WebSocket Streaming Handler
@@ -303,7 +303,11 @@ export default function Home() {
 
     const client = new SimulationStreamClient(apiBase, selectedScenario.id, {
       onFrame: (frame, status) => {
-        setCurrentRunFrames((prev) => [...prev, frame]);
+        setCurrentRunFrames((prev) => {
+          const next = [...prev, frame];
+          setCurrentFrameIdx(next.length - 1);
+          return next;
+        });
 
         if (frame.new_violations && frame.new_violations.length > 0) {
           setLatestViolation(frame.new_violations[0]);
@@ -452,7 +456,7 @@ export default function Home() {
 
   const currentFrame = isStreaming
     ? (currentRunFrames.length > 0 ? currentRunFrames[currentRunFrames.length - 1] : null)
-    : (currentRunFrames[currentFrameIdx] ?? null);
+    : (currentRunFrames[currentFrameIdx] ?? (currentRunFrames.length > 0 ? currentRunFrames[currentRunFrames.length - 1] : null));
 
   // Track violations on frame transition without calling setState synchronously inside render loop
   useEffect(() => {
@@ -547,7 +551,8 @@ export default function Home() {
                   <div className="flex items-center gap-1.5 font-mono text-xs">
                     <button
                       onClick={() => handleSwitchRunView("baseline")}
-                      className={`px-3 py-1 rounded-lg transition font-semibold flex items-center gap-1.5 ${
+                      disabled={!evaluation.baseline_run}
+                      className={`px-3 py-1 rounded-lg transition font-semibold flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
                         activeRunView === "baseline"
                           ? "bg-rose-600 text-white shadow-md shadow-rose-600/30"
                           : "bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800"
@@ -559,7 +564,8 @@ export default function Home() {
 
                     <button
                       onClick={() => handleSwitchRunView("verified")}
-                      className={`px-3 py-1 rounded-lg transition font-semibold flex items-center gap-1.5 ${
+                      disabled={!evaluation.verification_run}
+                      className={`px-3 py-1 rounded-lg transition font-semibold flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
                         activeRunView === "verified"
                           ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/30"
                           : "bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800"
@@ -683,19 +689,37 @@ export default function Home() {
                       <div className="grid grid-cols-3 gap-2">
                         <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-center">
                           <div className="text-[10px] text-slate-400">Pillar 1: Safety</div>
-                          <div className="text-xs font-bold text-emerald-400 mt-0.5">
+                          <div
+                            className={`text-xs font-bold mt-0.5 ${
+                              evaluation.final_result.safety_pillar_passed !== false
+                                ? "text-emerald-400"
+                                : "text-rose-400"
+                            }`}
+                          >
                             {evaluation.final_result.safety_pillar_passed !== false ? "✓ PASS" : "✗ FAIL"}
                           </div>
                         </div>
                         <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-center">
                           <div className="text-[10px] text-slate-400">Pillar 2: Behavior</div>
-                          <div className="text-xs font-bold text-emerald-400 mt-0.5">
+                          <div
+                            className={`text-xs font-bold mt-0.5 ${
+                              evaluation.final_result.behavior_pillar_passed !== false
+                                ? "text-emerald-400"
+                                : "text-rose-400"
+                            }`}
+                          >
                             {evaluation.final_result.behavior_pillar_passed !== false ? "✓ PASS" : "✗ FAIL"}
                           </div>
                         </div>
                         <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-center">
                           <div className="text-[10px] text-slate-400">Pillar 3: Health</div>
-                          <div className="text-xs font-bold text-emerald-400 mt-0.5">
+                          <div
+                            className={`text-xs font-bold mt-0.5 ${
+                              evaluation.final_result.runtime_health_pillar_passed !== false
+                                ? "text-emerald-400"
+                                : "text-rose-400"
+                            }`}
+                          >
                             {evaluation.final_result.runtime_health_pillar_passed !== false ? "✓ PASS" : "✗ FAIL"}
                           </div>
                         </div>
