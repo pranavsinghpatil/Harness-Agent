@@ -590,19 +590,19 @@ export interface AuditReceipt {
   three_pillars: {
     pillar_1_safety: {
       name: string;
-      status: "PASS" | "FAIL";
+      status: "PASS" | "FAIL" | "PENDING";
       details: string;
       min_clearance?: number;
       violations_count?: number;
     };
     pillar_2_behavior: {
       name: string;
-      status: "PASS" | "FAIL";
+      status: "PASS" | "FAIL" | "PENDING";
       details: string;
     };
     pillar_3_health: {
       name: string;
-      status: "PASS" | "FAIL";
+      status: "PASS" | "FAIL" | "PENDING";
       details: string;
       controller_health?: string;
     };

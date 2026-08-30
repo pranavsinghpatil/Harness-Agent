@@ -274,20 +274,27 @@ export async function getInvestigationEvents(
 }
 
 /**
- * Submits a reviewer decision (APPROVE or REJECT) for a pending patch.
- * Requires bearer authentication (e.g. HARNESS_APPROVAL_TOKEN).
+ * Submits a human-in-the-loop reviewer decision (APPROVE or REJECT) for a pending patch.
+ *
+ * @param apiBase - The root URL of the backend API service (e.g. `http://localhost:8000`).
+ * @param investigationId - Public ID of the investigation currently in AWAITING_APPROVAL phase.
+ * @param payload - Approval decision details (`patch_id`, `decision` ["APPROVE"|"REJECT"], and optional `reason`).
+ * @param token - Optional bearer authentication token provided by the authenticated reviewer or environment.
+ * @returns Promise resolving to the updated InvestigationSessionSnapshot transitioning to VERIFYING or COMPLETED.
+ * @throws Error if non-2xx HTTP status is returned (e.g. 401 Unauthorized, 404 Not Found, 409 Invalid State).
  */
 export async function approveInvestigationPatch(
   apiBase: string,
   investigationId: string,
   payload: PatchApprovalPayload,
-  token: string = "test-reviewer-token"
+  token?: string
 ): Promise<import("../types/simulation").InvestigationSessionSnapshot> {
+  const authToken = token?.trim() || process.env.NEXT_PUBLIC_HARNESS_APPROVAL_TOKEN || "";
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token.trim()}`;
+  if (authToken) {
+    headers["Authorization"] = `Bearer ${authToken}`;
   }
 
   const res = await fetch(

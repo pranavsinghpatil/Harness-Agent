@@ -69,6 +69,7 @@ export default function Home() {
         investigationId={investigation.investigationId}
         investigationPhase={investigation.phase}
         investigationStatus={investigation.status}
+        investigationOutcome={investigation.conclusion?.outcome}
         streamConnectionStatus={investigation.connectionStatus}
         debuggerStatusText={debuggerStatusText}
         debuggerStatusClass={debuggerStatusClass}

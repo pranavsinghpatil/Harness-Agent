@@ -3,20 +3,27 @@
 import React from "react";
 import { Hypothesis, FalsificationPlan } from "../types/simulation";
 
-interface HypothesisBoardProps {
+/**
+ * Props for the HypothesisBoard component.
+ */
+export interface HypothesisBoardProps {
   hypotheses: Hypothesis[];
   falsificationPlans?: FalsificationPlan[];
   activeHypothesis?: Hypothesis | null;
   leadingHypothesis?: Hypothesis | null;
 }
 
+/**
+ * Renders the Bayesian hypothesis ranking board with confidence meters,
+ * support/contradiction experiment tags, and falsification status badges.
+ */
 export const HypothesisBoard: React.FC<HypothesisBoardProps> = ({
   hypotheses,
   falsificationPlans = [],
   activeHypothesis,
   leadingHypothesis,
 }) => {
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string): string => {
     switch (status) {
       case "SUPPORTED":
         return "bg-emerald-500/20 text-emerald-300 border-emerald-500/40";
@@ -29,7 +36,7 @@ export const HypothesisBoard: React.FC<HypothesisBoardProps> = ({
     }
   };
 
-  const getConfidenceColor = (conf: number) => {
+  const getConfidenceColor = (conf: number): string => {
     if (conf >= 0.75) return "from-emerald-500 to-teal-500";
     if (conf >= 0.4) return "from-amber-500 to-yellow-500";
     return "from-rose-500 to-orange-500";

@@ -646,12 +646,21 @@ export function useInvestigation(apiBase: string) {
       // Don't re-fetch if we already have full telemetry frames cached
       if ((stateRef.current.allExperimentFrames[experimentId]?.length || 0) > 10) return;
 
+      const expectedSessionId = stateRef.current.investigationId;
       hydratingEvaluationsRef.current.add(evaluationId);
       try {
         const evaluation = await getEvaluation(apiBase, evaluationId);
+        // Guard against race condition: discard if active session changed during fetch
+        if (stateRef.current.investigationId !== expectedSessionId) {
+          return;
+        }
+
         const frames = (evaluation.baseline_run?.telemetry_frames as TelemetryFrame[]) || [];
         if (frames.length > 0) {
           setState((prev) => {
+            if (prev.investigationId !== expectedSessionId) {
+              return prev;
+            }
             const updatedAll = {
               ...prev.allExperimentFrames,
               [experimentId]: frames,

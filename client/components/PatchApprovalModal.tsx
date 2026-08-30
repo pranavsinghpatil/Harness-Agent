@@ -7,6 +7,9 @@ import {
   Hypothesis,
 } from "../types/simulation";
 
+/**
+ * Props for the human-in-the-loop PatchApprovalModal.
+ */
 export interface PatchApprovalModalProps {
   patch: PatchResult | null;
   isOpen: boolean;
@@ -17,6 +20,9 @@ export interface PatchApprovalModalProps {
   objective?: string;
 }
 
+/**
+ * Modal dialogue providing unified diff inspection, reviewer token authorization, and approval submission.
+ */
 export const PatchApprovalModal: React.FC<PatchApprovalModalProps> = ({
   patch,
   isOpen,
@@ -25,7 +31,7 @@ export const PatchApprovalModal: React.FC<PatchApprovalModalProps> = ({
   diagnosis,
   leadingHypothesis,
 }) => {
-  const [token, setToken] = useState<string>("test-reviewer-token");
+  const [token, setToken] = useState<string>("");
   const [reason, setReason] = useState<string>(
     "Evidence from counterfactual tests supports the proposed stale-observation safety guard."
   );
@@ -36,7 +42,7 @@ export const PatchApprovalModal: React.FC<PatchApprovalModalProps> = ({
   // Close on Escape key
   useEffect(() => {
     if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
       if (e.key === "Escape" && !isSubmitting) {
         onClose();
       }
@@ -47,7 +53,7 @@ export const PatchApprovalModal: React.FC<PatchApprovalModalProps> = ({
 
   if (!isOpen || !patch) return null;
 
-  const handleDecision = async (decision: "APPROVE" | "REJECT") => {
+  const handleDecision = async (decision: "APPROVE" | "REJECT"): Promise<void> => {
     setIsSubmitting(true);
     setErrorMsg(null);
     try {
@@ -63,7 +69,7 @@ export const PatchApprovalModal: React.FC<PatchApprovalModalProps> = ({
   const diffText = patch.unified_diff || patch.diff || "";
   const strategies = patch.strategies_applied || (patch.strategy_used ? [patch.strategy_used] : ["DYNAMIC_STOPPING_BUFFER"]);
 
-  const handleCopyDiff = () => {
+  const handleCopyDiff = (): void => {
     const textToCopy = diffText || patch.patched_code || "";
     if (textToCopy && navigator.clipboard) {
       navigator.clipboard.writeText(textToCopy);
@@ -286,15 +292,15 @@ export const PatchApprovalModal: React.FC<PatchApprovalModalProps> = ({
                 Reviewer Authentication Token (Bearer)
               </label>
               <input
-                type="text"
+                type="password"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
                 disabled={isSubmitting}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
-                placeholder="test-reviewer-token"
+                placeholder="Enter token (optional if configured in env)"
               />
               <p className="text-[10px] text-slate-500 mt-1 font-mono">
-                Used to sign the audit receipt (Default: test-reviewer-token)
+                Used to authenticate approval against backend security checks
               </p>
             </div>
 

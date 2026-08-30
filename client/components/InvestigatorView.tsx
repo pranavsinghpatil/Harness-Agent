@@ -91,14 +91,13 @@ export const InvestigatorView: React.FC<InvestigatorViewProps> = ({
     }
   }, [investigation.phase, investigation.status, investigation.investigationId]);
 
-  // Derive playback frames directly from store without redundant state
-  const playbackFrames: TelemetryFrame[] =
-    (selectedExperimentId && investigation.allExperimentFrames[selectedExperimentId])
-      ? investigation.allExperimentFrames[selectedExperimentId]
-      : investigation.activeExperimentFrames;
+  // Derive playback frames directly from store without falling back to live frames when a historical experiment is selected
+  const playbackFrames: TelemetryFrame[] = selectedExperimentId
+    ? investigation.allExperimentFrames[selectedExperimentId] || []
+    : investigation.activeExperimentFrames;
 
   // Handle Experiment Selection (LIVE vs Historical Replay)
-  const handleSelectExperiment = (expId: string | null) => {
+  const handleSelectExperiment = (expId: string | null): void => {
     setSelectedExperimentId(expId);
     if (expId) {
       setCurrentFrameIdx(0);

@@ -27,13 +27,20 @@ import { VehicleHUD } from "./VehicleHUD";
 import { HardwareHUD } from "./HardwareHUD";
 import { ManifestCard } from "./ManifestCard";
 
-interface AdHocDebuggerViewProps {
+/**
+ * Props for the legacy/secondary AdHocDebuggerView component.
+ */
+export interface AdHocDebuggerViewProps {
   apiBase: string;
   presets: HardwarePreset[];
   scenarios: ScenarioDefinition[];
   onStatusChange?: (statusText: string, statusClass: string) => void;
 }
 
+/**
+ * Ad-Hoc Evaluation Debugger component allowing manual scenario execution,
+ * interactive 2D simulation canvas scrub, and live WebSocket streaming.
+ */
 export const AdHocDebuggerView: React.FC<AdHocDebuggerViewProps> = ({
   apiBase,
   presets,
@@ -60,7 +67,7 @@ export const AdHocDebuggerView: React.FC<AdHocDebuggerViewProps> = ({
   const [simStatusText, setSimStatusText] = useState<string>("READY");
   const [simStatusClass, setSimStatusClass] = useState<string>("text-indigo-400");
 
-  const updateStatus = (text: string, cls: string) => {
+  const updateStatus = (text: string, cls: string): void => {
     setSimStatusText(text);
     setSimStatusClass(cls);
     onStatusChange?.(text, cls);

@@ -12,6 +12,9 @@ import {
   AuditReceipt,
 } from "../types/simulation";
 
+/**
+ * Props for the CloseLoopCertification receipt viewer and export panel.
+ */
 export interface CloseLoopCertificationProps {
   conclusion: InvestigationConclusion | null;
   verification: Record<string, unknown> | null;
@@ -28,6 +31,9 @@ export interface CloseLoopCertificationProps {
   runs?: InvestigationRun[];
 }
 
+/**
+ * 3-Pillar Reliability Verification & Audit Receipt Component.
+ */
 export const CloseLoopCertification: React.FC<CloseLoopCertificationProps> = ({
   conclusion,
   verification,
@@ -55,11 +61,58 @@ export const CloseLoopCertification: React.FC<CloseLoopCertificationProps> = ({
     );
   }
 
-  const outcome = conclusion?.outcome || (verification ? "PROVEN_REPAIRED" : "IN_PROGRESS");
+  const outcome = conclusion?.outcome || "IN_PROGRESS";
   const isRepaired = outcome === "PROVEN_REPAIRED" || outcome === "PROVEN_SAFE";
+
+  const getPillar1Status = (): "PASS" | "FAIL" | "PENDING" => {
+    if (!verification && !conclusion) return "PENDING";
+    if (isRepaired) return "PASS";
+    if (outcome === "NOT_PROVEN_SAFE" || outcome === "PATCH_REJECTED") return "FAIL";
+    if (verification) {
+      const violations =
+        (verification.violations_count as number) ??
+        (Array.isArray(verification.violations) ? verification.violations.length : 0);
+      const clearance = (verification.min_clearance as number) ?? 0;
+      return violations === 0 && clearance > 0.8 ? "PASS" : "FAIL";
+    }
+    return "PENDING";
+  };
+
+  const getPillar2Status = (): "PASS" | "FAIL" | "PENDING" => {
+    if (!verification && !conclusion) return "PENDING";
+    if (isRepaired) return "PASS";
+    if (outcome === "NOT_PROVEN_SAFE" || outcome === "PATCH_REJECTED") return "FAIL";
+    if (verification) {
+      return verification.task_completed === false ? "FAIL" : "PASS";
+    }
+    return "PENDING";
+  };
+
+  const getPillar3Status = (): "PASS" | "FAIL" | "PENDING" => {
+    if (!verification && !conclusion) return "PENDING";
+    if (isRepaired) return "PASS";
+    if (outcome === "NOT_PROVEN_SAFE" || outcome === "PATCH_REJECTED") return "FAIL";
+    if (verification) {
+      return verification.controller_health === "HEALTHY" ? "PASS" : "FAIL";
+    }
+    return "PENDING";
+  };
+
+  const pillar1Status = getPillar1Status();
+  const pillar2Status = getPillar2Status();
+  const pillar3Status = getPillar3Status();
 
   const totalRegressionCases = regression.length;
   const passedRegressionCases = regression.filter((c) => c.passed).length;
+  const regressionSuccessRate =
+    totalRegressionCases > 0
+      ? Math.round((passedRegressionCases / totalRegressionCases) * 100)
+      : 0;
+  const regressionSummaryText =
+    totalRegressionCases > 0 && passedRegressionCases === totalRegressionCases
+      ? `${passedRegressionCases} / ${totalRegressionCases} Cases Passing (100% Fixed)`
+      : `${passedRegressionCases} / ${totalRegressionCases || 1} Cases Passing (${regressionSuccessRate}% Passing)`;
+
   const activeInvestigationId =
     investigationId ||
     approval?.investigation_id ||
@@ -78,11 +131,16 @@ export const CloseLoopCertification: React.FC<CloseLoopCertificationProps> = ({
   const verificationTraceHash =
     (verification?.trace_hash as string) ||
     ((verification?.verification_run as Record<string, unknown>)?.trace_hash as string) ||
-    "sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    (verification?.run_id ? `trace-${verification.run_id}` : "UNAVAILABLE");
 
   // Build Structured Audit Receipt
   const buildAuditReceiptData = (): AuditReceipt => {
     const timestamp = conclusion?.completed_at ? conclusion.completed_at * 1000 : Date.now();
+
+    const allHashesAvailable = Boolean(
+      verificationTraceHash !== "UNAVAILABLE" &&
+      (regression.length === 0 || regression.every((r) => Boolean(r.trace_hash)))
+    );
 
     return {
       receipt_version: "1.0.0",
@@ -139,19 +197,19 @@ export const CloseLoopCertification: React.FC<CloseLoopCertificationProps> = ({
       three_pillars: {
         pillar_1_safety: {
           name: "Safety Invariant Guard",
-          status: isRepaired ? "PASS" : "FAIL",
+          status: pillar1Status,
           details: "Zero collisions and minimum clearance maintained (>0.80m threshold) across all fault conditions.",
           min_clearance: (verification?.min_clearance as number) ?? 1.81,
           violations_count: (verification?.violations_count as number) ?? 0,
         },
         pillar_2_behavior: {
           name: "Behavioral Goal Progress",
-          status: isRepaired ? "PASS" : "FAIL",
+          status: pillar2Status,
           details: "Vehicle successfully traverses waypoint trajectory and completes mission objectives.",
         },
         pillar_3_health: {
           name: "Runtime Hardware Health",
-          status: isRepaired ? "PASS" : "FAIL",
+          status: pillar3Status,
           details: "Zero controller exceptions, zero deadline crashes, and bounded compute memory queue depths.",
           controller_health: "HEALTHY",
         },
@@ -160,7 +218,7 @@ export const CloseLoopCertification: React.FC<CloseLoopCertificationProps> = ({
         evaluation_id: (verification?.evaluation_id as string) || "eval_verified_close_loop",
         run_id: (verification?.run_id as string) || "run_verified_01",
         trace_hash: verificationTraceHash,
-        status: isRepaired ? "VERIFIED_SAFE" : "NOT_PROVEN_SAFE",
+        status: isRepaired ? "VERIFIED_SAFE" : outcome,
         violations_count: (verification?.violations_count as number) ?? 0,
         min_clearance: (verification?.min_clearance as number) ?? 1.81,
       },
@@ -172,16 +230,16 @@ export const CloseLoopCertification: React.FC<CloseLoopCertificationProps> = ({
         violations_count: r.violations_count ?? 0,
         status: r.passed ? "FIXED (PASS)" : "FAIL",
         min_clearance: r.min_clearance ?? 1.81,
-        trace_hash: r.trace_hash || `sha256-det-${idx + 1}-bitexact-${r.passed ? "pass" : "fail"}`,
+        trace_hash: r.trace_hash || (r.run_id ? `trace-${r.run_id}` : "UNAVAILABLE"),
       })),
       cryptographic_proof: {
         verification_trace_hash: verificationTraceHash,
         regression_trace_hashes: regression.map((r, idx) => ({
           case_id: r.experiment_id || r.evaluation_id || `EXP-00${idx + 1}`,
-          trace_hash: r.trace_hash || `sha256-det-${idx + 1}-bitexact-${r.passed ? "pass" : "fail"}`,
+          trace_hash: r.trace_hash || (r.run_id ? `trace-${r.run_id}` : "UNAVAILABLE"),
           passed: r.passed,
         })),
-        bit_exact_reproducible: true,
+        bit_exact_reproducible: allHashesAvailable && isRepaired,
         verification_statement:
           "This audit receipt certifies bit-exact closed-loop repair and regression verification under deterministic simulation guarantees.",
       },
@@ -225,9 +283,11 @@ export const CloseLoopCertification: React.FC<CloseLoopCertificationProps> = ({
 **Hardware Profile:** \`${receipt.investigation.hardware_preset_id}\`  
 **Deterministic Random Seed:** \`${receipt.investigation.seed}\`  
 **Certification Verdict:** **\`${receipt.investigation.outcome}\`**  
-**Reviewer Attestation:** \`${receipt.approval?.decision || "APPROVED"}\` by **${
-      receipt.approval?.reviewed_by || "System 2 Safety Operator"
-    }**
+**Reviewer Attestation:** ${
+      receipt.approval
+        ? `\`${receipt.approval.decision}\` by **${receipt.approval.reviewed_by}**`
+        : "*Not Recorded / Autonomous Mode*"
+    }
 
 ---
 
@@ -246,9 +306,9 @@ export const CloseLoopCertification: React.FC<CloseLoopCertificationProps> = ({
 - **Patch ID:** \`${receipt.patch?.patch_id || "patch_auto_01"}\`
 - **Mitigation Strategy:** \`${receipt.patch?.strategy || "DYNAMIC_STOPPING_BUFFER"}\`
 - **Transformations Applied:** ${receipt.patch?.transformations_applied?.map((t) => `\`${t}\``).join(", ") || "`DYNAMIC_STOPPING_BUFFER`"}
-- **Reviewer Identity:** **${receipt.approval?.reviewed_by || "Security Auditor"}**
-- **Reviewer Decision:** **${receipt.approval?.decision || "APPROVE"}**
-- **Reviewer Justification:** *"${receipt.approval?.reason || "Evidence confirms safety invariant holds under all test boundaries."}"*
+- **Reviewer Identity:** **${receipt.approval ? receipt.approval.reviewed_by : "N/A (Autonomous Mode)"}**
+- **Reviewer Decision:** **${receipt.approval ? receipt.approval.decision : "N/A"}**
+- **Reviewer Justification:** *"${receipt.approval?.reason || "No reviewer justification recorded."}"*
 
 ### Hardened Controller Unified Diff
 \`\`\`diff
@@ -278,7 +338,7 @@ All retained and boundary-discovered test cases re-executed against the hardened
 | :--- | :--- | :---: | :---: | :---: | :--- |
 ${regressionRows}
 
-**Suite Verification Summary:** **${passedRegressionCases} / ${totalRegressionCases || 1} Cases Passing (100% Fixed)**
+**Suite Verification Summary:** **${regressionSummaryText}**
 
 ---
 
@@ -289,7 +349,7 @@ ${regressionRows}
 > ${receipt.cryptographic_proof.verification_statement}
 
 - **Primary Verification Hash:** \`${receipt.cryptographic_proof.verification_trace_hash}\`
-- **Bit-Exact Verified:** \`true (Deterministic Seed ${receipt.investigation.seed})\`
+- **Bit-Exact Verified:** \`${receipt.cryptographic_proof.bit_exact_reproducible ? `true (Deterministic Seed ${receipt.investigation.seed})` : "false (Trace Unavailable)"}\`
 
 ### Audit Bounds & Caveats
 ${limitationsList}
@@ -498,7 +558,21 @@ ${limitationsList}
           <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-1 hover:border-slate-700 transition">
             <div className="flex items-center justify-between text-[11px] font-mono">
               <span className="text-slate-400 font-semibold">PILLAR 1</span>
-              <span className="text-emerald-400 font-bold">✓ PASS</span>
+              <span
+                className={
+                  pillar1Status === "PASS"
+                    ? "text-emerald-400 font-bold"
+                    : pillar1Status === "FAIL"
+                    ? "text-rose-400 font-bold"
+                    : "text-amber-400 font-bold"
+                }
+              >
+                {pillar1Status === "PASS"
+                  ? "✓ PASS"
+                  : pillar1Status === "FAIL"
+                  ? "✗ FAIL"
+                  : "⏳ PENDING"}
+              </span>
             </div>
             <div className="text-xs font-bold text-slate-100">Safety Invariant Guard</div>
             <p className="text-[11px] text-slate-400">
@@ -510,7 +584,21 @@ ${limitationsList}
           <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-1 hover:border-slate-700 transition">
             <div className="flex items-center justify-between text-[11px] font-mono">
               <span className="text-slate-400 font-semibold">PILLAR 2</span>
-              <span className="text-emerald-400 font-bold">✓ PASS</span>
+              <span
+                className={
+                  pillar2Status === "PASS"
+                    ? "text-emerald-400 font-bold"
+                    : pillar2Status === "FAIL"
+                    ? "text-rose-400 font-bold"
+                    : "text-amber-400 font-bold"
+                }
+              >
+                {pillar2Status === "PASS"
+                  ? "✓ PASS"
+                  : pillar2Status === "FAIL"
+                  ? "✗ FAIL"
+                  : "⏳ PENDING"}
+              </span>
             </div>
             <div className="text-xs font-bold text-slate-100">Behavioral Goal Progress</div>
             <p className="text-[11px] text-slate-400">
@@ -522,7 +610,21 @@ ${limitationsList}
           <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-1 hover:border-slate-700 transition">
             <div className="flex items-center justify-between text-[11px] font-mono">
               <span className="text-slate-400 font-semibold">PILLAR 3</span>
-              <span className="text-emerald-400 font-bold">✓ PASS</span>
+              <span
+                className={
+                  pillar3Status === "PASS"
+                    ? "text-emerald-400 font-bold"
+                    : pillar3Status === "FAIL"
+                    ? "text-rose-400 font-bold"
+                    : "text-amber-400 font-bold"
+                }
+              >
+                {pillar3Status === "PASS"
+                  ? "✓ PASS"
+                  : pillar3Status === "FAIL"
+                  ? "✗ FAIL"
+                  : "⏳ PENDING"}
+              </span>
             </div>
             <div className="text-xs font-bold text-slate-100">Runtime Hardware Health</div>
             <p className="text-[11px] text-slate-400">
@@ -539,8 +641,14 @@ ${limitationsList}
             <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">
               Discovered Multi-Case Regression Suite
             </div>
-            <span className="text-xs font-mono text-emerald-400 font-semibold">
-              {passedRegressionCases} / {totalRegressionCases} Cases Passing (100% Fixed)
+            <span
+              className={`text-xs font-mono font-semibold ${
+                passedRegressionCases === totalRegressionCases
+                  ? "text-emerald-400"
+                  : "text-amber-400"
+              }`}
+            >
+              {regressionSummaryText}
             </span>
           </div>
 
