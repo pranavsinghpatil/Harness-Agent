@@ -99,7 +99,7 @@ class VirtualEdgeScheduler:
                     if not current_task.is_deadline_missed:
                         current_task.is_deadline_missed = True
                         self.metrics.total_deadline_misses += 1
-                        event = {
+                        event: dict[str, float | str] = {
                             "task_id": current_task.task_id,
                             "name": current_task.name,
                             "sim_time": sim_time,
@@ -125,7 +125,7 @@ class VirtualEdgeScheduler:
             if sim_time > task.deadline and not task.is_deadline_missed:
                 task.is_deadline_missed = True
                 self.metrics.total_deadline_misses += 1
-                event = {
+                event: dict[str, float | str] = {
                     "task_id": task.task_id,
                     "name": task.name,
                     "sim_time": sim_time,

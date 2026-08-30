@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from sandbox.actuators.command import ActuatorCommand
+from sandbox.actuators.pipeline import ActuatorPipeline
 from sandbox.api.environment import SandboxEnvironment
 from sandbox.api.tools import get_scenario
 from scenarios.schema import ScenarioDefinition
@@ -36,6 +38,8 @@ def test_controller_execution_is_timestamped_through_scheduler_and_actuator() ->
     )
     assert command_payload["compute_started_at"] <= command_payload["compute_completed_at"]
     assert command_payload["compute_completed_at"] <= command_payload["input_timestamp"] + 0.01
+    assert "observation_id" in command_payload
+    assert "observation_age_s" in command_payload
 
     scheduled_controller: dict[str, Any] = next(
         payload
@@ -61,8 +65,8 @@ def test_perception_is_not_available_before_compute_completion() -> None:
     environment: SandboxEnvironment = SandboxEnvironment(scenario=scenario, event_listener=capture)
     environment.hardware.profile.cpu_capacity_units_per_sec = 1.0
     environment.reset()
-    for _ in range(12):
-        environment.step(0.01)
+    for _ in range(8):
+        environment.step(0.05)
 
     completed: dict[str, dict[str, Any]] = {
         payload["task_id"]: payload
@@ -77,3 +81,26 @@ def test_perception_is_not_available_before_compute_completion() -> None:
         task = completed[observation["observation_id"]]
         assert observation["available_at"] == task["completed_at"]
         assert observation["available_at"] >= task["input_timestamp"]
+
+
+def test_actuator_application_provenance_reports_effective_command() -> None:
+    pipeline: ActuatorPipeline = ActuatorPipeline(base_delay_s=0.001, jitter_std_s=0.0)
+    command: ActuatorCommand = ActuatorCommand(
+        throttle=1.0,
+        brake=0.8,
+        steering=0.25,
+        emergency_stop=True,
+    )
+    assert pipeline.submit_command(command, 0.0) is True
+    pipeline.throttle_effectiveness_factor = 0.5
+    pipeline.brake_effectiveness_factor = 0.25
+    pipeline.stuck_steering_angle = -0.5
+
+    effective: ActuatorCommand = pipeline.step(0.01)
+    applied: ActuatorCommand = pipeline.applied_commands_this_step[0]
+
+    assert applied.command_id == effective.command_id
+    assert applied.throttle == 0.5
+    assert applied.brake == 0.2
+    assert applied.steering == -0.5
+    assert applied.emergency_stop is True

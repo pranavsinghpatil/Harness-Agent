@@ -32,6 +32,13 @@ its deadline produces no new command.
 
 `ACTUATOR_APPLIED` is emitted once per command newly removed from the actuator
 queue, rather than once per simulation tick while the command remains active.
+The event reports the effective command after actuator effectiveness and stuck
+steering faults, while retaining the command ID and send timestamp.
+
+`COMMAND_ISSUED` includes both `observation_id` and `observation_age_s` for the
+observation used by that controller decision. This links the decision directly
+to the observation availability event instead of leaving age only as an
+unlinked scalar.
 
 This keeps scheduler pressure, transport timing, controller decisions, and
 physical actuation distinguishable in the evidence stream used by System 2.

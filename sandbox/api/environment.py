@@ -300,7 +300,7 @@ class SandboxEnvironment:
     ) -> None:
         """Queue perception and controller work before the scheduler advances."""
         if delivered_packets:
-            perception_task = ComputeTask(
+            perception_task: ComputeTask = ComputeTask(
                 task_id=f"compute_perception_{self.clock.step_count}",
                 name="perception",
                 compute_cost_units=0.1,
@@ -316,7 +316,7 @@ class SandboxEnvironment:
             else:
                 self._emit_task_rejected(perception_task, sim_time)
 
-        controller_task = ComputeTask(
+        controller_task: ComputeTask = ComputeTask(
             task_id=f"compute_controller_{self.clock.step_count}",
             name="controller",
             compute_cost_units=0.1,
@@ -393,7 +393,7 @@ class SandboxEnvironment:
             decision_time = task.completed_at if task.completed_at is not None else sim_time
             agent_cmd = self.target_agent.step(decision_time)
             observation_age = 0.0
-            latest_observation = max(
+            latest_observation: Optional[ObservationState] = max(
                 self._observations.values(),
                 key=lambda observation: observation.available_at,
                 default=None,
@@ -422,6 +422,9 @@ class SandboxEnvironment:
                     "compute_started_at": task.started_at,
                     "compute_completed_at": task.completed_at,
                     "observation_age_s": observation_age,
+                    "observation_id": (
+                        latest_observation.observation_id if latest_observation is not None else None
+                    ),
                     "throttle": agent_cmd.throttle,
                     "brake": agent_cmd.brake,
                     "steering": agent_cmd.steering,
@@ -442,6 +445,7 @@ class SandboxEnvironment:
                     "throttle": command.throttle,
                     "brake": command.brake,
                     "steering": command.steering,
+                    "emergency_stop": command.emergency_stop,
                 },
             )
 
