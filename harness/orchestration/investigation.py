@@ -53,6 +53,7 @@ class InvestigationSession:
         self.run_manager: RunManager = run_manager or default_run_manager
         self.status: InvestigationStatus = InvestigationStatus.CREATED
         self.created_at: float = time.time()
+        self.last_accessed_at: float = self.created_at
         self.started_at: Optional[float] = None
         self.finished_at: Optional[float] = None
         self.error: Optional[str] = None
@@ -111,7 +112,20 @@ class InvestigationSession:
         executor: Optional[Executor] = None,
         on_finished: Optional[Callable[[], None]] = None,
     ) -> bool:
-        """Start the investigation exactly once on a bounded executor."""
+        """Start the investigation exactly once on a bounded executor.
+
+        Args:
+            executor: Optional executor used for the worker submission.
+            on_finished: Optional callback invoked after the worker reaches a
+                terminal state.
+
+        Returns:
+            `True` when the worker was submitted, or `False` when submission
+            failed and the session was marked failed.
+
+        Raises:
+            RuntimeError: If this session has already started or terminated.
+        """
         with self._lock:
             if self.status != InvestigationStatus.CREATED:
                 raise RuntimeError(f"Investigation '{self.investigation_id}' has already started")
@@ -130,10 +144,15 @@ class InvestigationSession:
         return True
 
     def fail(self, error: str) -> None:
-        """Record a deterministic failure for work rejected before execution."""
+        """Record a deterministic pre-execution failure.
+
+        Running workers own their terminal transition; rejecting a call to
+        `fail()` after execution has started therefore raises instead of
+        allowing a later worker completion to publish a contradictory state.
+        """
         with self._lock:
-            if self.status in {InvestigationStatus.COMPLETED, InvestigationStatus.FAILED}:
-                return
+            if self.status != InvestigationStatus.CREATED:
+                raise RuntimeError("cannot fail an investigation after execution starts")
             self._mark_failed_locked(error)
 
     def _mark_failed_locked(self, error: str) -> None:
@@ -161,9 +180,12 @@ class InvestigationSession:
             investigator.run()
         except Exception as exc:
             with self._lock:
-                self._mark_failed_locked(f"{type(exc).__name__}: {exc}")
+                if self.status == InvestigationStatus.RUNNING:
+                    self._mark_failed_locked(f"{type(exc).__name__}: {exc}")
         else:
             with self._lock:
+                if self.status != InvestigationStatus.RUNNING:
+                    return
                 if self._investigator is not None:
                     self._result_snapshot = deepcopy(self._investigator.to_dict())
                 self.status = InvestigationStatus.COMPLETED
@@ -220,46 +242,7 @@ class InvestigationSession:
             finished_at = self.finished_at
             event_count = len(self._events)
             result = deepcopy(self._result_snapshot)
-        planner: dict[str, object] = (
-            result.get("planner", {})
-            if result and isinstance(result.get("planner", {}), dict)
-            else {}
-        )
-        runs: list[dict[str, object]] = (
-            result.get("runs", [])
-            if result and isinstance(result.get("runs", []), list)
-            else []
-        )
-        hypothesis_state = result.get("hypotheses", {}) if result else {}
-        hypotheses: list[dict[str, object]] = (
-            hypothesis_state.get("hypotheses", [])
-            if isinstance(hypothesis_state, dict)
-            and isinstance(hypothesis_state.get("hypotheses", []), list)
-            else []
-        )
-        traces: list[dict[str, object]] = (
-            result.get("decision_trace", [])
-            if result and isinstance(result.get("decision_trace", []), list)
-            else []
-        )
-        pending = planner.get("pending_experiment")
-        leading = max(
-            hypotheses,
-            key=lambda item: (
-                float(item.get("confidence", 0.0)),
-                str(item.get("hypothesis_id", "")),
-            ),
-            default=None,
-        )
-        latest_failure = next(
-            (
-                run.get("outcome")
-                for run in reversed(runs)
-                if isinstance(run.get("outcome"), dict)
-                and not run["outcome"].get("passed", False)
-            ),
-            None,
-        )
+        state: dict[str, object] = self._derive_snapshot_state(result)
         return {
             "investigation_id": self.investigation_id,
             "status": status.value,
@@ -273,28 +256,103 @@ class InvestigationSession:
             "finished_at": finished_at,
             "event_count": event_count,
             "error": error,
-            "current_phase": pending.get("phase") if isinstance(pending, dict) else None,
-            "current_experiment": pending.get("experiment_id") if isinstance(pending, dict) else None,
+            **state,
+            "result": result,
+        }
+
+    @staticmethod
+    def _snapshot_collections(
+        result: Optional[dict[str, object]],
+    ) -> tuple[
+        dict[str, object],
+        list[dict[str, object]],
+        list[dict[str, object]],
+        list[dict[str, object]],
+    ]:
+        """Normalize result collections before deriving control-plane state."""
+        planner_value: object = result.get("planner", {}) if result else {}
+        planner: dict[str, object] = planner_value if isinstance(planner_value, dict) else {}
+        runs_value: object = result.get("runs", []) if result else []
+        runs: list[dict[str, object]] = (
+            [item for item in runs_value if isinstance(item, dict)]
+            if isinstance(runs_value, list)
+            else []
+        )
+        hypothesis_value: object = result.get("hypotheses", {}) if result else {}
+        hypothesis_state: dict[str, object] = (
+            hypothesis_value if isinstance(hypothesis_value, dict) else {}
+        )
+        hypothesis_list: object = hypothesis_state.get("hypotheses", [])
+        hypotheses: list[dict[str, object]] = (
+            [item for item in hypothesis_list if isinstance(item, dict)]
+            if isinstance(hypothesis_list, list)
+            else []
+        )
+        trace_value: object = result.get("decision_trace", []) if result else []
+        traces: list[dict[str, object]] = (
+            [item for item in trace_value if isinstance(item, dict)]
+            if isinstance(trace_value, list)
+            else []
+        )
+        return planner, runs, hypotheses, traces
+
+    @staticmethod
+    def _derive_snapshot_state(
+        result: Optional[dict[str, object]],
+    ) -> dict[str, object]:
+        """Derive compact control-plane fields from an immutable result."""
+        planner: dict[str, object]
+        runs: list[dict[str, object]]
+        hypotheses: list[dict[str, object]]
+        traces: list[dict[str, object]]
+        planner, runs, hypotheses, traces = InvestigationSession._snapshot_collections(result)
+        pending_value: object = planner.get("pending_experiment")
+        pending: Optional[dict[str, object]] = (
+            pending_value if isinstance(pending_value, dict) else None
+        )
+        leading: Optional[dict[str, object]] = max(
+            hypotheses,
+            key=lambda item: (
+                float(item.get("confidence", 0.0)),
+                str(item.get("hypothesis_id", "")),
+            ),
+            default=None,
+        )
+        latest_failure: Optional[dict[str, object]] = None
+        for run in reversed(runs):
+            outcome_value: object = run.get("outcome")
+            if isinstance(outcome_value, dict) and not outcome_value.get("passed", False):
+                latest_failure = outcome_value
+                break
+        return {
+            "current_phase": pending.get("phase") if pending else None,
+            "current_experiment": pending.get("experiment_id") if pending else None,
             "completed_experiments": len(runs),
             "budget_remaining": planner.get("remaining_budget"),
             "active_hypothesis": leading.get("hypothesis_id") if leading else None,
             "leading_hypothesis": leading,
             "latest_decision": traces[-1] if traces else None,
             "latest_failure": latest_failure,
-            "result": result,
         }
+
+    def touch(self) -> None:
+        """Record a successful store lookup for terminal-session LRU retention."""
+        with self._lock:
+            self.last_accessed_at = time.time()
 
     def evaluation_ids(self) -> tuple[str, ...]:
         """Return evaluation IDs retained by this session for cleanup."""
         with self._lock:
             result = deepcopy(self._result_snapshot)
-        if not result:
-            return ()
-        return tuple(
-            str(run["evaluation_id"])
-            for run in result.get("runs", [])
-            if isinstance(run, dict) and run.get("evaluation_id")
-        )
+            investigator = self._investigator
+        owned: set[str] = set(investigator.evaluation_ids if investigator else ())
+        if result:
+            owned.update(
+                str(run["evaluation_id"])
+                for run in result.get("runs", [])
+                if isinstance(run, dict) and run.get("evaluation_id")
+            )
+        return tuple(sorted(owned))
 
 
 class InvestigationSessionStore:
@@ -330,7 +388,7 @@ class InvestigationSessionStore:
         for evaluation_id in session.evaluation_ids():
             remover(evaluation_id)
 
-    def _evict_locked(self) -> None:
+    def _evict_locked(self, reserved_slots: int = 0) -> None:
         """Apply terminal-session TTL and LRU bounds; caller holds the store lock."""
         now = time.time()
         expired = [
@@ -349,9 +407,13 @@ class InvestigationSessionStore:
                 for session in self._sessions.values()
                 if session.status in {InvestigationStatus.COMPLETED, InvestigationStatus.FAILED}
             ),
-            key=lambda session: session.finished_at or session.created_at,
+            key=lambda session: session.last_accessed_at,
         )
-        for session in terminal[: max(0, len(self._sessions) - self._max_sessions)]:
+        excess: int = max(
+            0,
+            len(self._sessions) + reserved_slots - self._max_sessions,
+        )
+        for session in terminal[:excess]:
             self._sessions.pop(session.investigation_id, None)
             self._discard_evaluations(session)
 
@@ -362,7 +424,7 @@ class InvestigationSessionStore:
     ) -> InvestigationSession:
         """Create and retain a new session without starting its worker."""
         with self._lock:
-            self._evict_locked()
+            self._evict_locked(reserved_slots=1)
             for _ in range(3):
                 investigation_id = f"investigation_{uuid.uuid4()}"
                 if investigation_id not in self._sessions:
@@ -376,11 +438,26 @@ class InvestigationSessionStore:
         raise RuntimeError("could not allocate a unique investigation ID")
 
     def start(self, session: InvestigationSession) -> bool:
-        """Admit a session to bounded execution or record explicit overload failure."""
+        """Admit one session to bounded execution.
+
+        Args:
+            session: Created investigation session to submit to the worker pool.
+
+        Returns:
+            `True` when the session was submitted, or `False` when capacity is
+            exhausted or executor submission fails. Failed submissions publish
+            an explicit session failure event.
+        """
+        if session.status != InvestigationStatus.CREATED:
+            raise RuntimeError(f"Investigation '{session.investigation_id}' has already started")
         if not self._admission.acquire(blocking=False):
             session.fail("investigation execution capacity exhausted")
             return False
-        started = session.start(executor=self._executor, on_finished=self._release_slot)
+        try:
+            started = session.start(executor=self._executor, on_finished=self._release_slot)
+        except Exception:
+            self._release_slot()
+            raise
         if not started:
             self._release_slot()
         return started
@@ -389,7 +466,10 @@ class InvestigationSessionStore:
         """Look up a session by its stable public identifier."""
         with self._lock:
             self._evict_locked()
-            return self._sessions.get(investigation_id)
+            session = self._sessions.get(investigation_id)
+            if session is not None:
+                session.touch()
+            return session
 
     def list(self) -> tuple[InvestigationSession, ...]:
         """Return all retained sessions in creation order."""
@@ -398,7 +478,18 @@ class InvestigationSessionStore:
             return tuple(self._sessions.values())
 
     def delete(self, investigation_id: str) -> bool:
-        """Delete a terminal session and its retained evaluations."""
+        """Delete one retained terminal session and its owned evaluations.
+
+        Args:
+            investigation_id: Stable public ID of the retained session.
+
+        Returns:
+            `True` when a session was deleted, or `False` when no session with
+            that ID is retained. Owned evaluations are removed on success.
+
+        Raises:
+            RuntimeError: If the requested session is still running.
+        """
         with self._lock:
             session = self._sessions.get(investigation_id)
             if session is None:

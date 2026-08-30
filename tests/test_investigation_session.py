@@ -5,6 +5,8 @@ from __future__ import annotations
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 from harness.investigator import InvestigatorConfig
 from harness.models.evaluation import EvaluationRequest, HarnessRun, HarnessRunStatus
 from harness.models.events import HarnessEventType
@@ -116,3 +118,36 @@ def test_store_rejects_over_capacity_without_starting_unbounded_work() -> None:
     assert "capacity exhausted" in (second.error or "")
     manager.release.set()
     assert first.wait(timeout=5.0) is True
+
+
+def test_duplicate_start_does_not_consume_an_admission_permit() -> None:
+    store = InvestigationSessionStore(max_workers=1, max_queued=0)
+    manager = BlockingRunManager()
+    first = store.create(InvestigatorConfig(objective="first", budget=1), manager)
+    second = store.create(InvestigatorConfig(objective="second", budget=1), manager)
+
+    assert store.start(first) is True
+    assert manager.started.wait(timeout=5.0) is True
+    with pytest.raises(RuntimeError):
+        store.start(first)
+    manager.release.set()
+    assert first.wait(timeout=5.0) is True
+    assert store.start(second) is True
+    assert second.wait(timeout=5.0) is True
+
+
+def test_terminal_session_lru_updates_on_successful_lookup() -> None:
+    store = InvestigationSessionStore(max_workers=1, max_queued=0, max_sessions=2)
+    first = store.create(InvestigatorConfig(objective="first", budget=1), FakeRunManager())
+    second = store.create(InvestigatorConfig(objective="second", budget=1), FakeRunManager())
+    first.fail("test failure")
+    second.fail("test failure")
+    first.last_accessed_at = 2.0
+    second.last_accessed_at = 1.0
+    assert store.get(first.investigation_id) is first
+
+    third = store.create(InvestigatorConfig(objective="third", budget=1), FakeRunManager())
+
+    assert store.get(first.investigation_id) is first
+    assert store.get(second.investigation_id) is None
+    assert store.get(third.investigation_id) is third

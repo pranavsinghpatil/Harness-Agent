@@ -81,7 +81,7 @@ class AutonomousInvestigator:
         event_callback: Optional[Callable[[HarnessEvent], None]] = None,
         investigation_id: Optional[str] = None,
     ) -> None:
-        self.config = config
+        self.config: InvestigatorConfig = config
         self.run_manager = run_manager or default_run_manager
         self.investigation_id: str = investigation_id or f"investigation_{uuid.uuid4()}"
         self.event_callback: Optional[Callable[[HarnessEvent], None]] = event_callback
@@ -105,6 +105,7 @@ class AutonomousInvestigator:
         self.hypothesis_engine: HypothesisEngine = HypothesisEngine()
         self._falsification_plans: list[FalsificationPlan] = []
         self._decision_traces: list[DecisionTrace] = []
+        self._evaluation_ids: set[str] = set()
         self._last_run_limit: Optional[int] = None
         self._last_run_was_caller_limited: bool = False
 
@@ -211,6 +212,7 @@ class AutonomousInvestigator:
             )
             evaluation: HarnessEvaluation = self.run_manager.create_evaluation(request)
             evaluation_id = evaluation.evaluation_id
+            self._evaluation_ids.add(evaluation_id)
             stage = "System 1 execution"
             run = self.run_manager.execute_baseline(evaluation_id)
             outcome: ExperimentOutcome = self._to_outcome(run)
@@ -422,6 +424,11 @@ class AutonomousInvestigator:
     def completed_run_count(self) -> int:
         """Return the number of finalized experiments in this investigation."""
         return len(self._runs)
+
+    @property
+    def evaluation_ids(self) -> tuple[str, ...]:
+        """Return every evaluation created, including candidates that later failed."""
+        return tuple(sorted(self._evaluation_ids))
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the complete investigation and its evidence-backed state.

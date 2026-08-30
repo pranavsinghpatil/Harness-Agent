@@ -54,6 +54,10 @@ silently dropping work. Completed and failed sessions are retained for a
 configurable TTL and LRU session bound. Eviction also releases evaluations
 owned by the session from `RunManager`.
 
+LRU recency is updated whenever a retained session is successfully read through
+the store. Evaluation ownership is recorded immediately after creation, so a
+candidate that fails during execution or finalization is cleaned up as well.
+
 The WebSocket subscription snapshots history and registers its live queue under
 one lock. Terminal events are therefore replayed or delivered exactly once
 from the session event history, even when completion races with connection
