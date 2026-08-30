@@ -430,10 +430,18 @@ class ExperimentPlanner:
 
     def has_next_candidate(self) -> bool:
         """Return whether another candidate exists without reserving it."""
+        return self.peek_next() is not None
+
+    def peek_next(self) -> Optional[ExperimentCandidate]:
+        """Preview the exact next candidate without changing planner state.
+
+        Returns:
+            The candidate that a subsequent ``plan_next`` call will reserve, or
+            ``None`` when the planner is waiting, exhausted, or stopped.
+        """
         preview: ExperimentPlanner = copy(self)
         preview._planned = dict(self._planned)
-        candidate: Optional[ExperimentCandidate] = preview.plan_next()
-        return candidate is not None
+        return preview.plan_next()
 
     def observe(self, experiment_id: str, outcome: ExperimentOutcome) -> EvidenceRecord:
         """Attach an execution outcome and unlock the next planner decision."""
@@ -441,6 +449,26 @@ class ExperimentPlanner:
         if candidate is None:
             raise KeyError(f"Unknown planned experiment '{experiment_id}'")
         return self.ledger.append(candidate, outcome)
+
+    def release(self, experiment_id: str) -> ExperimentCandidate:
+        """Release an unobserved reservation so the candidate can be retried.
+
+        A candidate is reserved before System 1 execution. If finalization fails
+        before evidence is appended, retaining that reservation would block the
+        planner permanently. Reusing the latest sequence slot keeps retry output
+        deterministic and preserves the planner's baseline invariants.
+        """
+        candidate = self._planned.get(experiment_id)
+        if candidate is None:
+            raise KeyError(f"Unknown planned experiment '{experiment_id}'")
+        if self.ledger.get(experiment_id) is not None:
+            raise ValueError(f"Cannot release observed experiment '{experiment_id}'")
+
+        del self._planned[experiment_id]
+        latest_id = f"exp_{self._next_sequence - 1:03d}"
+        if experiment_id == latest_id:
+            self._next_sequence -= 1
+        return candidate
 
     def status(self) -> dict[str, Any]:
         """Return an audit-friendly planner snapshot."""

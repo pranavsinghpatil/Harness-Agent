@@ -9,7 +9,7 @@ import pytest
 
 from backend.routes.harness import InvestigationPayload
 from harness.investigator import AutonomousInvestigator, InvestigatorConfig
-from harness.planning import ExperimentOutcome
+from harness.planning import ExperimentCandidate, ExperimentOutcome
 from harness.models.evaluation import ControllerHealth, EvaluationRequest, HarnessRun, HarnessRunStatus
 from mcp_server.server import MCPServerHandler
 
@@ -62,6 +62,11 @@ def test_investigator_executes_candidates_and_preserves_evidence() -> None:
     assert result["hypotheses"]["hypotheses"]
     assert result["falsification_plans"]
     assert result["runs"][0]["evidence"] is not None
+    assert len(result["decision_trace"]) == 5
+    assert result["decision_trace"][0]["action"] == "ESTABLISH_BASELINE"
+    assert result["decision_trace"][-1]["action"] == "TEST_INTERACTION"
+    assert result["decision_trace"][-1]["post_observation_leading_hypothesis_id"]
+    assert result["decision_trace"][-1]["next_experiment_id"] is None
 
 
 def test_investigator_limits_a_short_run_without_spending_remaining_budget() -> None:
@@ -127,6 +132,42 @@ def test_incomplete_completed_run_is_not_passing_evidence() -> None:
     outcome: ExperimentOutcome = AutonomousInvestigator._to_outcome(run)
 
     assert outcome.passed is False
+
+
+def test_failed_evidence_finalization_releases_candidate_for_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    investigator: AutonomousInvestigator = AutonomousInvestigator(
+        InvestigatorConfig(objective="Keep finalization atomic.", budget=1),
+        run_manager=FakeRunManager(),
+    )
+    candidate: ExperimentCandidate | None = investigator.planner.peek_next()
+    assert candidate is not None
+
+    attempts: int = 0
+
+    def fail_evidence(run: HarnessRun | None) -> Any:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ValueError("malformed event evidence")
+        return None
+
+    monkeypatch.setattr(AutonomousInvestigator, "_build_evidence", staticmethod(fail_evidence))
+
+    with pytest.raises(ValueError, match="malformed event evidence"):
+        investigator.run()
+
+    assert investigator.planner.ledger.records == ()
+    assert investigator.hypothesis_engine.hypotheses == ()
+    assert investigator.to_dict()["decision_trace"] == []
+
+    retried_candidate: ExperimentCandidate | None = investigator.planner.peek_next()
+    assert retried_candidate is not None
+    assert retried_candidate.experiment_id == candidate.experiment_id
+    investigator.run()
+    assert len(investigator.planner.ledger.records) == 1
+    assert len(investigator.to_dict()["decision_trace"]) == 1
 
 
 def test_rejected_run_limit_does_not_mutate_investigation_status() -> None:

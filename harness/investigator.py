@@ -13,8 +13,9 @@ from harness.models.evaluation import (
     HarnessRun,
     HarnessRunStatus,
 )
-from harness.hypotheses import FalsificationPlan, HypothesisEngine
+from harness.hypotheses import FalsificationPlan, Hypothesis, HypothesisEngine
 from harness.orchestration.run_manager import RunManager, default_run_manager
+from harness.reasoning.decision_trace import DecisionTrace, DecisionTraceBuilder
 from harness.planning import (
     ExperimentCandidate,
     EvidenceRecord,
@@ -56,6 +57,7 @@ class InvestigationRun:
     evaluation_id: str
     outcome: ExperimentOutcome
     evidence: Optional[EvidenceSnapshot] = None
+    decision_trace: Optional[DecisionTrace] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize one investigation step for REST, MCP, and audit logs."""
@@ -64,6 +66,7 @@ class InvestigationRun:
             "experiment": self.candidate.to_dict(),
             "outcome": self.outcome.to_dict(),
             "evidence": self.evidence.to_dict() if self.evidence else None,
+            "decision_trace": self.decision_trace.to_dict() if self.decision_trace else None,
         }
 
 
@@ -97,6 +100,7 @@ class AutonomousInvestigator:
         self._runs: list[InvestigationRun] = []
         self.hypothesis_engine: HypothesisEngine = HypothesisEngine()
         self._falsification_plans: list[FalsificationPlan] = []
+        self._decision_traces: list[DecisionTrace] = []
         self._last_run_limit: Optional[int] = None
         self._last_run_was_caller_limited: bool = False
 
@@ -127,11 +131,13 @@ class AutonomousInvestigator:
         """Compile and execute one candidate while preserving structured failures."""
         evaluation_id = ""
         run: Optional[HarnessRun] = None
+        stage: str = "fault override construction"
         try:
             overrides: list[dict[str, Any]] = self.config.perturbation_space.build_fault_overrides(
                 values=dict(candidate.values),
                 experiment_id=candidate.experiment_id,
             )
+            stage = "evaluation creation"
             request: EvaluationRequest = EvaluationRequest(
                 hardware_preset_id=self.config.hardware_preset_id,
                 scenario_id=self.config.scenario_id,
@@ -146,33 +152,64 @@ class AutonomousInvestigator:
             )
             evaluation: HarnessEvaluation = self.run_manager.create_evaluation(request)
             evaluation_id = evaluation.evaluation_id
+            stage = "System 1 execution"
             run = self.run_manager.execute_baseline(evaluation_id)
             outcome: ExperimentOutcome = self._to_outcome(run)
         except Exception as exc:
             outcome = ExperimentOutcome(
                 passed=False,
-                violation_count=1,
+                violation_count=0,
                 details={
                     "execution_error": type(exc).__name__,
+                    "execution_stage": stage,
                     "message": str(exc),
                 },
             )
 
+        try:
+            result: InvestigationRun = self._finalize_candidate(
+                candidate, evaluation_id, outcome, run
+            )
+        except Exception:
+            if self.planner.ledger.get(candidate.experiment_id) is None:
+                self.planner.release(candidate.experiment_id)
+            raise
+        self._runs.append(result)
+        return result
+
+    def _finalize_candidate(
+        self,
+        candidate: ExperimentCandidate,
+        evaluation_id: str,
+        outcome: ExperimentOutcome,
+        run: Optional[HarnessRun],
+    ) -> InvestigationRun:
+        """Record outcome, update beliefs, and create the run's audit trace."""
+        evidence: Optional[EvidenceSnapshot] = self._build_evidence(run)
+        pre_execution_hypotheses: tuple[Hypothesis, ...] = self.hypothesis_engine.hypotheses
         record: EvidenceRecord = self.planner.observe(candidate.experiment_id, outcome)
         self.hypothesis_engine.observe(record, self.planner.dimensions)
         if not outcome.passed:
-            plan: Optional[FalsificationPlan] = self.hypothesis_engine.propose_falsification(record, self.planner.dimensions)
+            plan: Optional[FalsificationPlan] = self.hypothesis_engine.propose_falsification(
+                record, self.planner.dimensions
+            )
             if plan is not None:
                 self._falsification_plans.append(plan)
-        evidence: Optional[EvidenceSnapshot] = self._build_evidence(run)
-        result = InvestigationRun(
+        decision_trace: DecisionTrace = DecisionTraceBuilder.build(
+            candidate=candidate,
+            outcome=outcome,
+            pre_execution_hypotheses=pre_execution_hypotheses,
+            post_observation_hypotheses=self.hypothesis_engine.hypotheses,
+            next_candidate=self.planner.peek_next(),
+        )
+        self._decision_traces.append(decision_trace)
+        return InvestigationRun(
             candidate=candidate,
             evaluation_id=evaluation_id,
             outcome=outcome,
             evidence=evidence,
+            decision_trace=decision_trace,
         )
-        self._runs.append(result)
-        return result
 
     @staticmethod
     def _build_evidence(run: Optional[HarnessRun]) -> Optional[EvidenceSnapshot]:
@@ -231,7 +268,8 @@ class AutonomousInvestigator:
 
         Returns:
             A dictionary containing objective metadata, execution status, run
-            evidence, planner state, competing hypotheses, and falsification plans.
+            evidence, planner state, competing hypotheses, falsification plans, and
+            ordered decision traces showing actual planner transitions.
             ``PARTIAL`` means the caller stopped before the configured budget;
             ``BUDGET_EXHAUSTED`` means no more budget remains; ``COMPLETE`` means
             the finite planner has no next candidate.
@@ -261,4 +299,5 @@ class AutonomousInvestigator:
             "evidence": planner_status["summary"],
             "hypotheses": self.hypothesis_engine.to_dict(),
             "falsification_plans": [plan.to_dict() for plan in self._falsification_plans],
+            "decision_trace": [trace.to_dict() for trace in self._decision_traces],
         }

@@ -34,6 +34,13 @@ Every investigation result should be inspectable as structured data containing
 the objective, experiments, evidence links, hypothesis history, diagnosis,
 repair result, and verification summary.
 
+Each executed experiment also emits a safe decision trace. It records the
+experiment phase, action class, hypotheses available before execution,
+post-observation belief updates, refuted historical hypotheses, estimated
+information value, outcome classification, evidence observation, decision
+rationale, and the planner's actual next candidate or terminal state. This is an
+audit record for frontend and MCP consumers, not private model reasoning.
+
 ## Reliability rules
 
 - Baseline behavior is measured before perturbation search begins.
