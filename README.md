@@ -88,23 +88,10 @@ TrueForge is not merely a tool in this repository—**TrueForge is the foundatio
 └───────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
-
-## 🎬 3-Minute Demo Video Walkthrough
-
-Watch the complete demonstration of the autonomous investigation lifecycle:  
-👉 **[Watch the 3-Minute Demo Video on YouTube](https://youtu.be/trueforge-harness-demo)**
-
-### Key Demo Timestamps
-- `0:00 - 0:45`: Introducing the dual-system architecture and hardware fault injection (System 1).
-- `0:45 - 1:30`: Triggering `showcase_perturbed_failure` and watching real-time 100 Hz WebSocket telemetry streaming (17,000+ audit events).
-- `1:30 - 2:15`: System 2 Bayesian hypothesis ranking, 4-phase experiment graph, and Causal Failure DAG analysis.
-- `2:15 - 2:45`: Human-in-the-Loop Safety Gate: Reviewing the AST unified diff and authorizing the repair.
-- `2:45 - 3:00`: 3-Pillar verification, multi-case regression suite pass, and cryptographic audit receipt download.
 
 ---
 
-## ⚡ Quickstart & Setup Guide
+##  Quickstart & Setup Guide
 
 ### 1. Prerequisites
 - **Python:** 3.11 or higher
