@@ -7,7 +7,7 @@ import {
   CausalDiagnosticReport,
   PatchResult,
   VerificationResult,
-  InvestigationResult,
+  InvestigationSessionSnapshot,
 } from "../types/simulation";
 
 export interface RunScenarioPayload {
@@ -210,12 +210,23 @@ export interface InvestigationPayload {
   seed?: number;
   budget?: number;
   max_boundary_steps?: number;
+  max_sim_time?: number;
 }
 
-export async function runInvestigation(
+export interface PatchApprovalPayload {
+  patch_id: string;
+  decision: "APPROVE" | "REJECT" | string;
+  reason?: string;
+}
+
+/**
+ * Creates an asynchronous, persistent InvestigationSession on the backend.
+ * Returns HTTP 202 Accepted with the initial session snapshot (including investigation_id).
+ */
+export async function startInvestigation(
   apiBase: string,
   payload: InvestigationPayload
-): Promise<InvestigationResult> {
+): Promise<import("../types/simulation").InvestigationSessionSnapshot> {
   const res = await fetch(`${apiBase}/api/harness/investigations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -223,7 +234,96 @@ export async function runInvestigation(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `Autonomous investigation failed (${res.status})`);
+    throw new Error(err.detail || `Failed to start investigation (${res.status})`);
   }
   return res.json();
 }
+
+/**
+ * Polls the current session snapshot (status, phase, hypotheses, traces, patch, verification, conclusion).
+ */
+export async function getInvestigation(
+  apiBase: string,
+  investigationId: string
+): Promise<import("../types/simulation").InvestigationSessionSnapshot> {
+  const res = await fetch(
+    `${apiBase}/api/harness/investigations/${encodeURIComponent(investigationId)}`
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Failed to fetch investigation (${res.status})`);
+  }
+  return res.json();
+}
+
+/**
+ * Retrieves the full ordered history of canonical HarnessEvent items for an investigation session.
+ */
+export async function getInvestigationEvents(
+  apiBase: string,
+  investigationId: string
+): Promise<import("../types/simulation").HarnessEvent[]> {
+  const res = await fetch(
+    `${apiBase}/api/harness/investigations/${encodeURIComponent(investigationId)}/events`
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Failed to fetch investigation events (${res.status})`);
+  }
+  return res.json();
+}
+
+/**
+ * Submits a human-in-the-loop reviewer decision (APPROVE or REJECT) for a pending patch.
+ *
+ * @param apiBase - The root URL of the backend API service (e.g. `http://localhost:8000`).
+ * @param investigationId - Public ID of the investigation currently in AWAITING_APPROVAL phase.
+ * @param payload - Approval decision details (`patch_id`, `decision` ["APPROVE"|"REJECT"], and optional `reason`).
+ * @param token - Optional bearer authentication token provided by the authenticated reviewer or environment.
+ * @returns Promise resolving to the updated InvestigationSessionSnapshot transitioning to VERIFYING or COMPLETED.
+ * @throws Error if non-2xx HTTP status is returned (e.g. 401 Unauthorized, 404 Not Found, 409 Invalid State).
+ */
+export async function approveInvestigationPatch(
+  apiBase: string,
+  investigationId: string,
+  payload: PatchApprovalPayload,
+  token?: string
+): Promise<import("../types/simulation").InvestigationSessionSnapshot> {
+  const authToken = token?.trim() || process.env.NEXT_PUBLIC_HARNESS_APPROVAL_TOKEN || "";
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (authToken) {
+    headers["Authorization"] = `Bearer ${authToken}`;
+  }
+
+  const res = await fetch(
+    `${apiBase}/api/harness/investigations/${encodeURIComponent(investigationId)}/approval`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        patch_id: payload.patch_id,
+        decision: payload.decision,
+        reason: payload.reason || "",
+      }),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Patch approval failed (${res.status})`);
+  }
+  return res.json();
+}
+
+/**
+ * Backward compatibility wrapper that starts an investigation and returns the snapshot.
+ */
+export async function runInvestigation(
+  apiBase: string,
+  payload: InvestigationPayload
+): Promise<InvestigationSessionSnapshot> {
+  return startInvestigation(apiBase, payload);
+}
+
+

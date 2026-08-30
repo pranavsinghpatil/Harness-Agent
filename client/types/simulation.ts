@@ -84,11 +84,14 @@ export interface Violation {
 }
 
 export interface DynamicObstacle {
-  id: string;
+  id?: string;
+  obstacle_id?: string;
   x: number;
   y: number;
+  radius?: number;
   velocity?: number;
   heading?: number;
+  obstacle_type?: string;
 }
 
 export interface TelemetryFrame {
@@ -220,17 +223,7 @@ export interface HarnessRunData {
   violations?: Violation[];
   metrics?: Record<string, unknown>;
   events_count?: number;
-  telemetry_frames?: Array<{
-    sim_time: number;
-    vehicle: {
-      x: number;
-      y: number;
-      heading: number;
-      velocity: number;
-    };
-    min_clearance: number;
-    active_faults?: string[];
-  }>;
+  telemetry_frames?: TelemetryFrame[];
 }
 
 export interface HarnessEvaluationResultData {
@@ -303,6 +296,83 @@ export type WSStreamMessage = WSFrameMessage | WSManifestMessage | WSErrorMessag
 export type ExperimentPhase = "BASELINE" | "SCREEN" | "BOUNDARY" | "INTERACTION";
 export type HypothesisStatus = "ACTIVE" | "SUPPORTED" | "REFUTED";
 export type InvestigationStatus = "COMPLETE" | "BUDGET_EXHAUSTED" | "PARTIAL" | "IN_PROGRESS";
+export type InvestigationSessionStatus = "CREATED" | "RUNNING" | "COMPLETED" | "FAILED";
+
+export type InvestigationPhase =
+  | "INVESTIGATING"
+  | "DIAGNOSING"
+  | "PATCH_PROPOSED"
+  | "AWAITING_APPROVAL"
+  | "VERIFYING"
+  | "REGRESSING"
+  | "PATCH_REJECTED"
+  | "COMPLETED"
+  | "FAILED";
+
+export type HarnessEventType =
+  | "INVESTIGATION_CREATED"
+  | "INVESTIGATION_STARTED"
+  | "EXPERIMENT_PLANNED"
+  | "EXPERIMENT_STARTED"
+  | "EXPERIMENT_COMPLETED"
+  | "EVIDENCE_CAPTURED"
+  | "HYPOTHESIS_UPDATED"
+  | "FALSIFICATION_PROPOSED"
+  | "DECISION_RECORDED"
+  | "NEXT_EXPERIMENT_SELECTED"
+  | "INVESTIGATION_COMPLETED"
+  | "INVESTIGATION_FAILED"
+  | "SIMULATION_STARTED"
+  | "SIMULATION_STEP"
+  | "SIMULATION_TERMINATED"
+  | "FAULT_INJECTED"
+  | "FAULT_REVERTED"
+  | "SENSOR_SAMPLED"
+  | "PACKET_QUEUED"
+  | "PACKET_DELIVERED"
+  | "PACKET_DROPPED"
+  | "TASK_SCHEDULED"
+  | "PERCEPTION_TASK_SCHEDULED"
+  | "CONTROLLER_TASK_SCHEDULED"
+  | "OBSERVATION_AVAILABLE"
+  | "TASK_REJECTED"
+  | "COMPUTE_STARTED"
+  | "TASK_COMPLETED"
+  | "DEADLINE_MISSED"
+  | "THERMAL_THROTTLED"
+  | "COMMAND_ISSUED"
+  | "ACTUATOR_APPLIED"
+  | "CONTROLLER_EXCEPTION"
+  | "CONTROLLER_CRASHED"
+  | "INVARIANT_BREACHED"
+  | "COLLISION_DETECTED"
+  | "CLEARANCE_WARNING"
+  | "DIAGNOSIS_COMPLETED"
+  | "PATCH_GENERATED"
+  | "PATCH_APPROVAL_REQUESTED"
+  | "PATCH_APPROVED"
+  | "PATCH_REJECTED"
+  | "VERIFICATION_PASSED"
+  | "VERIFICATION_FAILED"
+  | "REGRESSION_STARTED"
+  | "REGRESSION_COMPLETED"
+  | "CONCLUSION_RECORDED";
+
+export type EventSeverity = "DEBUG" | "INFO" | "WARNING" | "ERROR" | "CRITICAL";
+
+export interface HarnessEvent {
+  evaluation_id: string;
+  run_id: string;
+  episode_id: string;
+  event_id: string;
+  sim_time: number;
+  wall_time: number;
+  investigation_id: string;
+  source: string;
+  type: HarnessEventType;
+  severity: EventSeverity;
+  payload: Record<string, unknown>;
+}
 
 export interface PlannerDimension {
   id: string;
@@ -443,3 +513,148 @@ export interface InvestigationResult {
   falsification_plans: FalsificationPlan[];
   decision_trace: DecisionTrace[];
 }
+
+export interface PatchApproval {
+  investigation_id: string;
+  patch_id: string;
+  decision: "APPROVE" | "REJECT" | string;
+  reviewed_by: string;
+  reason?: string;
+  decided_at?: number;
+}
+
+export interface RegressionCase {
+  evaluation_id: string;
+  passed: boolean;
+  violations_count: number;
+  status: string;
+  trace_hash: string;
+  scenario_id?: string;
+  experiment_id?: string;
+  min_clearance?: number;
+  [key: string]: unknown;
+}
+
+export interface InvestigationConclusion {
+  outcome: string;
+  leading_hypothesis?: Hypothesis | Record<string, unknown> | null;
+  failure_boundary?: Record<string, unknown> | null;
+  causal_chain?: CausalChainNode[];
+  counterexample?: Record<string, unknown> | null;
+  proposed_patch?: PatchResult | null;
+  approval?: PatchApproval | null;
+  verification?: Record<string, unknown> | null;
+  regression?: RegressionCase[];
+  limitations?: string[];
+  completed_at?: number;
+}
+
+export interface AuditReceipt {
+  receipt_version: string;
+  generated_at: number;
+  investigation: {
+    investigation_id: string;
+    objective: string;
+    scenario_id: string;
+    hardware_preset_id: string;
+    seed: number;
+    outcome: string;
+    completed_at?: number;
+  };
+  leading_hypothesis?: {
+    hypothesis_id?: string;
+    statement?: string;
+    confidence?: number;
+    variables?: string[];
+    supporting_experiments?: string[];
+    contradicting_experiments?: string[];
+  } | null;
+  diagnosis?: {
+    primary_root_cause?: string;
+    causal_nodes?: CausalChainNode[];
+    recommendations?: string[];
+  } | null;
+  patch?: {
+    patch_id?: string;
+    strategy?: string;
+    transformations_applied?: string[];
+    unified_diff?: string;
+    diff?: string;
+  } | null;
+  approval?: {
+    reviewed_by?: string;
+    decision?: string;
+    reason?: string;
+    decided_at?: number;
+  } | null;
+  three_pillars: {
+    pillar_1_safety: {
+      name: string;
+      status: "PASS" | "FAIL" | "PENDING";
+      details: string;
+      min_clearance?: number;
+      violations_count?: number;
+    };
+    pillar_2_behavior: {
+      name: string;
+      status: "PASS" | "FAIL" | "PENDING";
+      details: string;
+    };
+    pillar_3_health: {
+      name: string;
+      status: "PASS" | "FAIL" | "PENDING";
+      details: string;
+      controller_health?: string;
+    };
+  };
+  verification?: {
+    evaluation_id?: string;
+    run_id?: string;
+    trace_hash?: string;
+    status?: string;
+    violations_count?: number;
+    min_clearance?: number;
+  } | null;
+  regression_matrix: RegressionCase[];
+  cryptographic_proof: {
+    verification_trace_hash?: string;
+    regression_trace_hashes: { case_id: string; trace_hash: string; passed: boolean }[];
+    bit_exact_reproducible: boolean;
+    verification_statement: string;
+  };
+  limitations: string[];
+}
+
+export interface InvestigationSessionSnapshot {
+  investigation_id: string;
+  status: InvestigationSessionStatus;
+  phase: InvestigationPhase;
+  objective: string;
+  scenario_id: string;
+  hardware_preset_id: string;
+  seed: number;
+  budget: number;
+  max_sim_time?: number | null;
+  created_at: number;
+  started_at?: number | null;
+  finished_at?: number | null;
+  event_count: number;
+  error?: string | null;
+  current_phase?: string | null;
+  current_experiment?: ExperimentCandidate | null;
+  completed_experiments?: number;
+  budget_remaining?: number;
+  active_hypothesis?: Hypothesis | null;
+  leading_hypothesis?: Hypothesis | null;
+  latest_decision?: DecisionTrace | null;
+  latest_failure?: Record<string, unknown> | null;
+  diagnosis?: CausalDiagnosticReport | null;
+  patch?: PatchResult | null;
+  approval?: PatchApproval | null;
+  verification?: Record<string, unknown> | null;
+  regression?: RegressionCase[];
+  conclusion?: InvestigationConclusion | null;
+  result?: InvestigationResult | null;
+}
+
+

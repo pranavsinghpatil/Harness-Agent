@@ -2,6 +2,7 @@ import { ScenarioDefinition, TelemetryFrame } from "../types/simulation";
 
 export interface CanvasRenderOptions {
   arenaSize?: number; // default 50 meters
+  trajectoryTrail?: Array<{ x: number; y: number }>;
 }
 
 export function drawEmptyArena(
@@ -114,6 +115,26 @@ export function drawTelemetryFrame(
     ctx.stroke();
   }
 
+  // Draw Trajectory Trail if provided
+  if (options.trajectoryTrail && options.trajectoryTrail.length > 1) {
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(99, 102, 241, 0.45)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    for (let i = 0; i < options.trajectoryTrail.length; i++) {
+      const pt = options.trajectoryTrail[i];
+      const px = pt.x * scale;
+      const py = height - pt.y * scale;
+      if (i === 0) {
+        ctx.moveTo(px, py);
+      } else {
+        ctx.lineTo(px, py);
+      }
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   // Draw Goal
   if (scenario?.world?.goal) {
     const [gxRaw, gyRaw] = scenario.world.goal;
@@ -171,21 +192,22 @@ export function drawTelemetryFrame(
 
       ctx.fillStyle = "#fda4af";
       ctx.font = "9px monospace";
-      ctx.fillText(dyn.id, dx - 15, dy - 10);
+      ctx.fillText(dyn.id || dyn.obstacle_id || "obs", dx - 15, dy - 10);
     });
   }
 
   // Draw Rover
-  const rx = frame.vehicle_state.x * scale;
-  const ry = height - frame.vehicle_state.y * scale;
-  const rHeading = -frame.vehicle_state.heading; // Invert Y for canvas coordinate space
+  const vState = frame.vehicle_state || (frame as unknown as { vehicle?: { x: number; y: number; heading: number; velocity: number } })?.vehicle || { x: 0, y: 0, heading: 0, velocity: 0 };
+  const rx = (vState.x ?? 0) * scale;
+  const ry = height - (vState.y ?? 0) * scale;
+  const rHeading = -(vState.heading ?? 0); // Invert Y for canvas coordinate space
 
   ctx.save();
   ctx.translate(rx, ry);
   ctx.rotate(rHeading);
 
   // Clearance halo (red if dangerously close < 1.0m, indigo otherwise)
-  const isDanger = frame.min_clearance < 1.0;
+  const isDanger = (frame.min_clearance ?? 2.0) < 1.0;
   ctx.strokeStyle = isDanger ? "rgba(244, 63, 94, 0.6)" : "rgba(99, 102, 241, 0.3)";
   ctx.lineWidth = isDanger ? 2 : 1;
   ctx.beginPath();
