@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
-from harness.models.evaluation import HarnessRun
+from harness.models.evaluation import ControllerHealth, HarnessRun, HarnessRunStatus
 from harness.models.events import HarnessEvent, HarnessEventType
 from harness.models.diagnostics import (
     CausalDiagnosticReport,
@@ -32,6 +32,18 @@ class CausalTelemetryAnalyzer:
         report_id = f"diag_{uuid.uuid4().hex[:8]}"
 
         if not run.violations:
+            runtime_failure: Optional[str] = cls._runtime_failure_reason(run)
+            if runtime_failure:
+                return CausalDiagnosticReport(
+                    report_id=report_id,
+                    run_id=run.run_id,
+                    evaluation_id=run.evaluation_id,
+                    primary_root_cause=runtime_failure,
+                    markdown_summary=f"### Runtime failure\n{runtime_failure}",
+                    patch_recommendations=[
+                        "Repair the runtime or task-completion failure before safety certification."
+                    ],
+                )
             return CausalDiagnosticReport(
                 report_id=report_id,
                 run_id=run.run_id,
@@ -65,6 +77,17 @@ class CausalTelemetryAnalyzer:
             patch_recommendations=recommendations,
             markdown_summary=markdown_summary,
         )
+
+    @staticmethod
+    def _runtime_failure_reason(run: HarnessRun) -> Optional[str]:
+        """Classify non-safety failures so they cannot be reported as safe."""
+        if run.status != HarnessRunStatus.COMPLETED:
+            return f"Execution ended with run status {run.status.value}."
+        if run.controller_health != ControllerHealth.HEALTHY:
+            return f"Controller runtime health was {run.controller_health.value}."
+        if not run.task_completed:
+            return "Execution completed without completing the requested task."
+        return None
 
     @classmethod
     def _extract_failure_trigger(cls, violation: Any, run: HarnessRun) -> FailureTrigger:

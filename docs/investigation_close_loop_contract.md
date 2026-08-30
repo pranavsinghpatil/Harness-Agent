@@ -21,13 +21,14 @@ bounded in-process worker. Safe investigations skip repair and complete with a
 {
   "patch_id": "patch_1234",
   "decision": "APPROVE",
-  "reviewed_by": "frontend-or-agent-id",
   "reason": "Evidence supports the proposed failsafe"
 }
 ```
 
-The response is the same session snapshot returned by the status endpoint. The
-snapshot includes `diagnosis`, `patch`, `approval`, `verification`,
+The caller must authenticate with a Bearer token configured through
+`HARNESS_APPROVAL_TOKEN`. The server records `HARNESS_REVIEWER_ID`, not a
+client-provided identity. The response is the same session snapshot returned
+by the status endpoint. The snapshot includes `diagnosis`, `patch`, `approval`, `verification`,
 `regression`, and a structured `conclusion` with limitations and evidence
 links. A stale patch ID returns `422`; a session outside the approval phase
 returns `409`.

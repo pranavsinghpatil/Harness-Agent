@@ -19,10 +19,10 @@ class RegressionSuiteRunner:
     def _passed(run: HarnessRun) -> bool:
         """Apply the same safety, health, and progress gate used by verification."""
         return (
-            not run.violations
-            and run.status not in {HarnessRunStatus.SAFETY_VIOLATION, HarnessRunStatus.CONTROLLER_CRASH}
+            run.status == HarnessRunStatus.COMPLETED
+            and not run.violations
             and run.controller_health == ControllerHealth.HEALTHY
-            and (run.task_completed or run.distance_traveled_m > 0.5)
+            and run.task_completed
         )
 
     @classmethod

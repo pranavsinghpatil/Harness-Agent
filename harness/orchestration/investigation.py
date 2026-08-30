@@ -10,12 +10,15 @@ import queue
 import threading
 import time
 import uuid
-from typing import Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 from harness.investigator import AutonomousInvestigator, InvestigatorConfig
 from harness.diagnostics.analyzer import CausalTelemetryAnalyzer
+from harness.models.diagnostics import CausalDiagnosticReport
+from harness.models.evaluation import ControllerHealth, HarnessRun, HarnessRunStatus
 from harness.models.events import EventSeverity, HarnessEvent, HarnessEventType
 from harness.models.investigation import InvestigationConclusion, InvestigationPhase, PatchApproval
+from harness.models.patch import PatchResult
 from harness.patcher.engine import AutoCodePatcher
 from harness.regression import RegressionSuiteRunner
 from harness.orchestration.run_manager import RunManager, default_run_manager
@@ -76,6 +79,8 @@ class InvestigationSession:
         self._regression: list[dict[str, object]] = []
         self._conclusion: Optional[InvestigationConclusion] = None
         self._approval_future: Optional[Future[None]] = None
+        self._executor: Executor = _DEFAULT_EXECUTOR
+        self._admission_released: bool = True
         self._publish(
             HarnessEventType.INVESTIGATION_CREATED,
             {"investigation_id": self.investigation_id, "objective": config.objective},
@@ -142,6 +147,7 @@ class InvestigationSession:
             if self.status != InvestigationStatus.CREATED:
                 raise RuntimeError(f"Investigation '{self.investigation_id}' has already started")
             self._on_finished = on_finished
+            self._admission_released = on_finished is None
             self.status = InvestigationStatus.RUNNING
             self.started_at = time.time()
             self._publish(
@@ -149,7 +155,8 @@ class InvestigationSession:
                 {"investigation_id": self.investigation_id, "budget": self.config.budget},
             )
             try:
-                self._future = (executor or _DEFAULT_EXECUTOR).submit(self._run)
+                self._executor = executor or _DEFAULT_EXECUTOR
+                self._future = self._executor.submit(self._run)
             except Exception as exc:
                 self._mark_failed_locked(f"{type(exc).__name__}: {exc}")
                 return False
@@ -207,44 +214,79 @@ class InvestigationSession:
                     if self.status == InvestigationStatus.RUNNING:
                         self._mark_failed_locked(f"{type(exc).__name__}: {exc}")
         finally:
-            if self._on_finished is not None:
-                self._on_finished()
+            if self.phase != InvestigationPhase.AWAITING_APPROVAL:
+                self._release_admission()
+
+    def _release_admission(self) -> None:
+        """Release the store admission slot exactly once after the full loop."""
+        callback: Optional[Callable[[], None]] = None
+        with self._lock:
+            if not self._admission_released:
+                self._admission_released = True
+                callback = self._on_finished
+        if callback is not None:
+            callback()
 
     def _refresh_result_locked(self) -> None:
         """Refresh the immutable investigator result while holding the session lock."""
         if self._investigator is not None:
             self._result_snapshot = deepcopy(self._investigator.to_dict())
 
-    def _select_failure_evaluation(self) -> tuple[str, object] | None:
+    @staticmethod
+    def _run_passed(run: HarnessRun) -> bool:
+        """Use the investigator's canonical safety, health, and progress gate."""
+        return (
+            run.status == HarnessRunStatus.COMPLETED
+            and run.controller_health == ControllerHealth.HEALTHY
+            and run.task_completed
+            and not run.violations
+        )
+
+    def _select_failure_evaluation(self) -> Optional[tuple[str, HarnessRun]]:
         """Select the first retained failed baseline as the repair target."""
         investigator: Optional[AutonomousInvestigator] = self._investigator
         if investigator is None:
             return None
-        getter = getattr(self.run_manager, "get_evaluation", None)
+        getter: Optional[Callable[[str], object]] = getattr(
+            self.run_manager, "get_evaluation", None
+        )
         if getter is None:
             return None
         for evaluation_id in investigator.evaluation_ids:
-            evaluation = getter(evaluation_id)
-            baseline = getattr(evaluation, "baseline_run", None) if evaluation else None
-            baseline_status = getattr(getattr(baseline, "status", None), "value", "")
-            if baseline is not None and (baseline.violations or baseline_status != "COMPLETED"):
+            evaluation: object = getter(evaluation_id)
+            baseline_value: object = getattr(evaluation, "baseline_run", None) if evaluation else None
+            baseline: Optional[HarnessRun] = (
+                cast(HarnessRun, baseline_value) if isinstance(baseline_value, HarnessRun) else None
+            )
+            if baseline is not None and not self._run_passed(baseline):
                 return evaluation_id, baseline
         return None
 
     def _prepare_repair_or_complete(self) -> None:
         """Diagnose the retained failure and stop at a human approval boundary."""
-        selected = self._select_failure_evaluation()
+        selected: Optional[tuple[str, HarnessRun]] = self._select_failure_evaluation()
         if selected is None:
             self._complete_with_conclusion("PROVEN_SAFE", "No safety failure required a repair.")
             return
         evaluation_id: str
-        baseline: object
+        baseline: HarnessRun
         evaluation_id, baseline = selected
+        if (
+            baseline.status == HarnessRunStatus.COMPLETED
+            and baseline.controller_health == ControllerHealth.HEALTHY
+            and not baseline.task_completed
+            and not baseline.violations
+        ):
+            self._complete_with_conclusion(
+                "NOT_PROVEN_SAFE",
+                "The bounded run completed without completing the requested task.",
+            )
+            return
         with self._lock:
             self.phase = InvestigationPhase.DIAGNOSING
-        diagnosis = CausalTelemetryAnalyzer.analyze_run(baseline)
+        diagnosis: CausalDiagnosticReport = CausalTelemetryAnalyzer.analyze_run(baseline)
         diagnosis.evaluation_id = evaluation_id
-        patch = AutoCodePatcher.generate_patch(self.config.controller_code or "", diagnosis)
+        patch: PatchResult = AutoCodePatcher.generate_patch(self.config.controller_code or "", diagnosis)
         with self._lock:
             self._diagnosis = diagnosis.to_dict()
             self._patch = patch.to_dict()
@@ -257,17 +299,28 @@ class InvestigationSession:
     def _complete_with_conclusion(self, outcome: str, limitation: str = "") -> None:
         """Finalize a session and publish its structured conclusion."""
         with self._lock:
-            leading = self._leading_hypothesis_locked()
+            leading: Optional[dict[str, Any]] = self._leading_hypothesis_locked()
+            diagnosis: dict[str, Any] = deepcopy(self._diagnosis or {})
+            patch: Optional[dict[str, Any]] = deepcopy(self._patch)
+            approval: Optional[dict[str, Any]] = self._approval.to_dict() if self._approval else None
+            verification: Optional[dict[str, Any]] = deepcopy(self._verification)
+            regression: list[dict[str, Any]] = deepcopy(self._regression)
             self._conclusion = InvestigationConclusion(
                 outcome=outcome,
                 leading_hypothesis=leading,
+                failure_boundary=diagnosis.get("failure_trigger"),
+                causal_chain=diagnosis.get("causal_nodes", []),
+                proposed_patch=patch,
+                approval=approval,
+                verification=verification,
+                regression=regression,
                 limitations=[limitation] if limitation else [],
             )
             self.phase = InvestigationPhase.COMPLETED
             self.status = InvestigationStatus.COMPLETED
             self.finished_at = time.time()
             self._refresh_result_locked()
-            conclusion = self._conclusion.to_dict()
+            conclusion: dict[str, Any] = self._conclusion.to_dict()
         self._publish(HarnessEventType.CONCLUSION_RECORDED, conclusion)
         self._publish(
             HarnessEventType.INVESTIGATION_COMPLETED,
@@ -276,15 +329,34 @@ class InvestigationSession:
 
     def _leading_hypothesis_locked(self) -> Optional[dict[str, object]]:
         """Read the strongest hypothesis from the latest investigator snapshot."""
-        result = self._investigator.to_dict() if self._investigator else {}
-        hypothesis_state = result.get("hypotheses", {})
-        hypotheses = hypothesis_state.get("hypotheses", []) if isinstance(hypothesis_state, dict) else []
+        result: dict[str, Any] = self._investigator.to_dict() if self._investigator else {}
+        hypothesis_state: object = result.get("hypotheses", {})
+        hypothesis_items: object = (
+            hypothesis_state.get("hypotheses", []) if isinstance(hypothesis_state, dict) else []
+        )
+        hypotheses: list[dict[str, Any]] = (
+            [item for item in hypothesis_items if isinstance(item, dict)]
+            if isinstance(hypothesis_items, list)
+            else []
+        )
         if not isinstance(hypotheses, list):
             return None
         return max(hypotheses, key=lambda item: float(item.get("confidence", 0.0)), default=None)
 
     def approve_patch(self, approval: PatchApproval) -> dict[str, object]:
-        """Accept or reject the pending patch and return the updated snapshot."""
+        """Accept or reject a pending patch and return the updated snapshot.
+
+        Args:
+            approval: Patch ID, normalized decision, reviewer identity, and rationale.
+
+        Returns:
+            The current session snapshot. An approval schedules bounded
+            verification and regression work on the session's executor.
+
+        Raises:
+            RuntimeError: If the session is not awaiting a patch decision.
+            ValueError: If the patch ID or decision is invalid.
+        """
         with self._lock:
             if self.phase != InvestigationPhase.AWAITING_APPROVAL or self._patch is None:
                 raise RuntimeError("investigation has no patch awaiting approval")
@@ -303,34 +375,40 @@ class InvestigationSession:
         )
         if approval.decision == "REJECT":
             self._complete_with_conclusion("PATCH_REJECTED", approval.reason)
+            self._release_admission()
         else:
-            self._approval_future = _DEFAULT_EXECUTOR.submit(self._verify_and_regress)
+            self._approval_future = self._executor.submit(self._verify_and_regress)
         return self.snapshot()
 
     def _verify_and_regress(self) -> None:
         """Run approved verification, replay the discovered suite, and conclude."""
         try:
-            patch = self._patch or {}
-            evaluation_id = str(self._diagnosis.get("evaluation_id", "")) if self._diagnosis else ""
+            patch: dict[str, Any] = self._patch or {}
+            evaluation_id: str = str(self._diagnosis.get("evaluation_id", "")) if self._diagnosis else ""
             with self._lock:
                 self.phase = InvestigationPhase.VERIFYING
-            verification = self.run_manager.execute_verification(
+            verification: HarnessRun = self.run_manager.execute_verification(
                 evaluation_id=evaluation_id,
                 patched_code=str(patch.get("patched_code", "")),
                 agent_id="verified_hardened_target",
                 event_callback=self._on_investigator_event,
                 max_sim_time=self.config.max_sim_time,
             )
-            verification_result = verification.to_dict()
+            verification_result: dict[str, Any] = verification.to_dict()
             with self._lock:
                 self._verification = verification_result
-            event_type = HarnessEventType.VERIFICATION_PASSED if not verification.violations else HarnessEventType.VERIFICATION_FAILED
+            verification_passed: bool = self._verification_passed(evaluation_id, verification)
+            event_type: HarnessEventType = (
+                HarnessEventType.VERIFICATION_PASSED
+                if verification_passed
+                else HarnessEventType.VERIFICATION_FAILED
+            )
             self._publish(event_type, verification_result)
             with self._lock:
                 self.phase = InvestigationPhase.REGRESSING
-            evaluation_ids = self.evaluation_ids()
+            evaluation_ids: tuple[str, ...] = self.evaluation_ids()
             self._publish(HarnessEventType.REGRESSION_STARTED, {"evaluation_count": len(evaluation_ids)})
-            regression = RegressionSuiteRunner(self.run_manager).run(
+            regression: list[dict[str, Any]] = RegressionSuiteRunner(self.run_manager).run(
                 evaluation_ids,
                 str(patch.get("patched_code", "")),
                 event_callback=self._on_investigator_event,
@@ -339,12 +417,26 @@ class InvestigationSession:
             with self._lock:
                 self._regression = regression
             self._publish(HarnessEventType.REGRESSION_COMPLETED, {"cases": regression})
-            outcome = "PROVEN_REPAIRED" if regression and all(case["passed"] for case in regression) else "NOT_PROVEN_SAFE"
+            outcome: str = (
+                "PROVEN_REPAIRED"
+                if regression and all(bool(case["passed"]) for case in regression)
+                else "NOT_PROVEN_SAFE"
+            )
             self._complete_with_conclusion(outcome, "Regression uses the retained deterministic experiment schedules.")
         except Exception as exc:
             with self._lock:
                 if self.status == InvestigationStatus.RUNNING:
                     self._mark_failed_locked(f"{type(exc).__name__}: {exc}")
+        finally:
+            self._release_admission()
+
+    def _verification_passed(self, evaluation_id: str, run: HarnessRun) -> bool:
+        """Read the canonical three-pillar verdict, with a test-double fallback."""
+        evaluation: object = self.run_manager.get_evaluation(evaluation_id)
+        final_result: object = getattr(evaluation, "final_result", None) if evaluation else None
+        if final_result is not None:
+            return bool(getattr(final_result, "verification_passed", False))
+        return self._run_passed(run)
 
     def wait(self, timeout: Optional[float] = None) -> bool:
         """Wait for completion and return whether the worker has stopped."""

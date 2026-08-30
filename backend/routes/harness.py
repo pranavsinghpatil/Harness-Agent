@@ -3,18 +3,19 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from harness.hardware.registry import default_hardware_registry
 from harness.orchestration.run_manager import default_run_manager
 from harness.models.evaluation import EvaluationRequest, EvaluationMode
 from harness.models.patch import PatchStrategyType
 from harness.models.investigation import PatchApproval
+from backend.auth import require_reviewer
 from harness.evaluator.loop import ReliabilityEvaluationLoop
 from harness.diagnostics.analyzer import CausalTelemetryAnalyzer
 from harness.patcher.engine import AutoCodePatcher
 from harness.investigator import AutonomousInvestigator, InvestigatorConfig
-from harness.orchestration.investigation import default_investigation_store
+from harness.orchestration.investigation import InvestigationSession, default_investigation_store
 from sandbox.api.tools import get_scenario
 
 router = APIRouter(prefix="/api/harness", tags=["harness"])
@@ -69,7 +70,6 @@ class PatchApprovalPayload(BaseModel):
 
     patch_id: str = Field(min_length=1, description="Pending patch identifier")
     decision: str = Field(description="APPROVE or REJECT")
-    reviewed_by: str = Field(min_length=1, description="Reviewer or approving agent identity")
     reason: str = Field(default="", description="Reason supporting the decision")
 
     @field_validator("decision", mode="before")
@@ -79,14 +79,6 @@ class PatchApprovalPayload(BaseModel):
         if not isinstance(value, str) or value.strip().upper() not in {"APPROVE", "REJECT"}:
             raise ValueError("decision must be APPROVE or REJECT")
         return value.strip().upper()
-
-    @field_validator("reviewed_by", mode="before")
-    @classmethod
-    def validate_reviewer(cls, value: object) -> str:
-        """Reject whitespace-only reviewer identities before session mutation."""
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("reviewed_by must not be blank")
-        return value.strip()
 
 
 @router.get("/hardware-presets")
@@ -324,13 +316,16 @@ def get_investigation(investigation_id: str) -> Dict[str, Any]:
 
 @router.post("/investigations/{investigation_id}/approval")
 def approve_investigation_patch(
-    investigation_id: str, payload: PatchApprovalPayload
+    investigation_id: str,
+    payload: PatchApprovalPayload,
+    reviewer_identity: str = Depends(require_reviewer),
 ) -> Dict[str, Any]:
     """Accept or reject a proposed repair and resume the owned close loop.
 
     Args:
         investigation_id: Stable investigation session identifier.
-        payload: Patch ID, decision, reviewer identity, and optional rationale.
+        payload: Patch ID, decision, and optional rationale.
+        reviewer_identity: Server-authenticated reviewer identity.
 
     Returns:
         Updated session snapshot. Approved patches continue in the background.
@@ -339,14 +334,14 @@ def approve_investigation_patch(
         HTTPException: 404 when the session is unknown, 409 when no patch is
             awaiting approval, or 422 when the patch ID is stale.
     """
-    session = default_investigation_store.get(investigation_id)
+    session: Optional[InvestigationSession] = default_investigation_store.get(investigation_id)
     if session is None:
         raise HTTPException(status_code=404, detail=f"Investigation '{investigation_id}' not found.")
-    approval = PatchApproval(
+    approval: PatchApproval = PatchApproval(
         investigation_id=investigation_id,
         patch_id=payload.patch_id,
         decision=payload.decision,
-        reviewed_by=payload.reviewed_by.strip(),
+        reviewed_by=reviewer_identity,
         reason=payload.reason.strip(),
     )
     try:

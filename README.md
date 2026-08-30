@@ -111,7 +111,7 @@ TrueForge operates as two tightly coupled, deterministic subsystems:
 | :--- | :--- | :--- |
 | `POST` | `/api/harness/investigations` | Initiates asynchronous investigation session (`202 Accepted`) |
 | `GET` | `/api/harness/investigations/{id}` | Retrieves session snapshot, leading hypothesis, and decision trace |
-| `POST` | `/api/harness/investigations/{id}/approval` | Approves or rejects a proposed repair; approval resumes verification and regression |
+| `POST` | `/api/harness/investigations/{id}/approval` | Bearer-authenticated approval or rejection; approval resumes verification and regression |
 | `GET` | `/api/harness/investigations/{id}/events` | Retrieves full audit log of canonical lifecycle & System 1 events |
 | `GET` | `/api/harness/investigations` | Lists all active and retained investigation sessions |
 | `DELETE` | `/api/harness/investigations/{id}` | Removes session and cleans up owned evaluation artifacts |
