@@ -13,7 +13,7 @@ from harness.models.evaluation import (
     HarnessRun,
     HarnessRunStatus,
 )
-from harness.hypotheses import FalsificationPlan, HypothesisEngine
+from harness.hypotheses import FalsificationPlan, Hypothesis, HypothesisEngine
 from harness.orchestration.run_manager import RunManager, default_run_manager
 from harness.reasoning.decision_trace import DecisionTrace, DecisionTraceBuilder
 from harness.planning import (
@@ -155,35 +155,49 @@ class AutonomousInvestigator:
         except Exception as exc:
             outcome = ExperimentOutcome(
                 passed=False,
-                violation_count=1,
+                violation_count=0,
                 details={
                     "execution_error": type(exc).__name__,
                     "message": str(exc),
                 },
             )
 
+        result: InvestigationRun = self._finalize_candidate(candidate, evaluation_id, outcome, run)
+        self._runs.append(result)
+        return result
+
+    def _finalize_candidate(
+        self,
+        candidate: ExperimentCandidate,
+        evaluation_id: str,
+        outcome: ExperimentOutcome,
+        run: Optional[HarnessRun],
+    ) -> InvestigationRun:
+        """Record outcome, update beliefs, and create the run's audit trace."""
+        pre_execution_hypotheses: tuple[Hypothesis, ...] = self.hypothesis_engine.hypotheses
         record: EvidenceRecord = self.planner.observe(candidate.experiment_id, outcome)
         self.hypothesis_engine.observe(record, self.planner.dimensions)
         if not outcome.passed:
-            plan: Optional[FalsificationPlan] = self.hypothesis_engine.propose_falsification(record, self.planner.dimensions)
+            plan: Optional[FalsificationPlan] = self.hypothesis_engine.propose_falsification(
+                record, self.planner.dimensions
+            )
             if plan is not None:
                 self._falsification_plans.append(plan)
         decision_trace: DecisionTrace = DecisionTraceBuilder.build(
             candidate=candidate,
             outcome=outcome,
-            hypotheses=self.hypothesis_engine.hypotheses,
+            pre_execution_hypotheses=pre_execution_hypotheses,
+            post_observation_hypotheses=self.hypothesis_engine.hypotheses,
+            next_candidate=self.planner.peek_next(),
         )
         self._decision_traces.append(decision_trace)
-        evidence: Optional[EvidenceSnapshot] = self._build_evidence(run)
-        result = InvestigationRun(
+        return InvestigationRun(
             candidate=candidate,
             evaluation_id=evaluation_id,
             outcome=outcome,
-            evidence=evidence,
+            evidence=self._build_evidence(run),
             decision_trace=decision_trace,
         )
-        self._runs.append(result)
-        return result
 
     @staticmethod
     def _build_evidence(run: Optional[HarnessRun]) -> Optional[EvidenceSnapshot]:
@@ -242,7 +256,8 @@ class AutonomousInvestigator:
 
         Returns:
             A dictionary containing objective metadata, execution status, run
-            evidence, planner state, competing hypotheses, and falsification plans.
+            evidence, planner state, competing hypotheses, falsification plans, and
+            ordered decision traces showing actual planner transitions.
             ``PARTIAL`` means the caller stopped before the configured budget;
             ``BUDGET_EXHAUSTED`` means no more budget remains; ``COMPLETE`` means
             the finite planner has no next candidate.

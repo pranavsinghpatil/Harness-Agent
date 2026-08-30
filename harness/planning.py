@@ -430,10 +430,18 @@ class ExperimentPlanner:
 
     def has_next_candidate(self) -> bool:
         """Return whether another candidate exists without reserving it."""
+        return self.peek_next() is not None
+
+    def peek_next(self) -> Optional[ExperimentCandidate]:
+        """Preview the exact next candidate without changing planner state.
+
+        Returns:
+            The candidate that a subsequent ``plan_next`` call will reserve, or
+            ``None`` when the planner is waiting, exhausted, or stopped.
+        """
         preview: ExperimentPlanner = copy(self)
         preview._planned = dict(self._planned)
-        candidate: Optional[ExperimentCandidate] = preview.plan_next()
-        return candidate is not None
+        return preview.plan_next()
 
     def observe(self, experiment_id: str, outcome: ExperimentOutcome) -> EvidenceRecord:
         """Attach an execution outcome and unlock the next planner decision."""
