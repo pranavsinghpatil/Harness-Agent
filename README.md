@@ -121,3 +121,29 @@ The sandbox includes the benchmark moving-obstacle scenario specified in the dev
 
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming (`feature/*`, `fix/*`, `t/*`) and PR rules.
 - Review [.ai/agents.md](.ai/agents.md) for detailed AI harness context, coding conventions, and testing protocols.
+
+## Agentic Investigation Layer
+
+The sandbox is System 1: it executes one declarative experiment deterministically.
+The Harness is System 2: it chooses bounded experiments, records evidence,
+maintains competing hypotheses, and decides what to test next.
+
+The investigator emits an auditable decision trace for every experiment:
+
+```text
+PLAN -> RUN -> OBSERVE -> HYPOTHESIZE -> EXPLAIN DECISION -> TEST NEXT
+```
+
+Each trace contains the experiment phase, action class, hypothesis IDs, selected
+hypothesis, information-value estimate, observed result, rationale, and next
+action. It gives frontend and TrueForge MCP consumers a concrete investigation
+story without exposing private model reasoning.
+
+The project differentiator is interaction discovery: independent sensor and
+compute perturbations can remain safe while their combined condition crosses a
+failure boundary. The harness preserves the seed, scenario, hardware profile,
+fault values, telemetry, and evidence needed to reproduce that result.
+
+The `investigate_reliability` MCP tool returns the experiment history,
+provenance-backed evidence, competing hypotheses, falsification plans, and the
+decision trace so the agent's observable actions are inspectable end to end.
