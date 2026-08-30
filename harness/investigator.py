@@ -240,19 +240,21 @@ class AutonomousInvestigator:
             evaluation_id=evaluation_id,
             run_id=run.run_id if run else "",
         )
-        self._emit_event(
-            HarnessEventType.DECISION_RECORDED,
-            {"experiment_id": candidate.experiment_id, "decision_trace": result.decision_trace.to_dict()},
-            evaluation_id=evaluation_id,
-            run_id=run.run_id if run else "",
-        )
-        if result.decision_trace.next_experiment_id is not None:
+        decision_trace = result.decision_trace
+        if decision_trace is not None:
+            self._emit_event(
+                HarnessEventType.DECISION_RECORDED,
+                {"experiment_id": candidate.experiment_id, "decision_trace": decision_trace.to_dict()},
+                evaluation_id=evaluation_id,
+                run_id=run.run_id if run else "",
+            )
+        if decision_trace is not None and decision_trace.next_experiment_id is not None:
             self._emit_event(
                 HarnessEventType.NEXT_EXPERIMENT_SELECTED,
                 {
                     "experiment_id": candidate.experiment_id,
-                    "next_experiment_id": result.decision_trace.next_experiment_id,
-                    "next_action": result.decision_trace.next_action,
+                    "next_experiment_id": decision_trace.next_experiment_id,
+                    "next_action": decision_trace.next_action,
                 },
                 evaluation_id=evaluation_id,
                 run_id=run.run_id if run else "",
