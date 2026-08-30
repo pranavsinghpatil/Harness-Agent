@@ -422,7 +422,19 @@ class InvestigationSessionStore:
         config: InvestigatorConfig,
         run_manager: Optional[RunManager] = None,
     ) -> InvestigationSession:
-        """Create and retain a new session without starting its worker."""
+        """Create and retain a new session without starting its worker.
+
+        Args:
+            config: Investigation configuration settings.
+            run_manager: Optional execution manager adapter.
+
+        Returns:
+            The created and retained InvestigationSession instance.
+
+        Raises:
+            RuntimeError: If the store reaches maximum capacity with active sessions
+                or fails to allocate a unique ID.
+        """
         with self._lock:
             self._evict_locked(reserved_slots=1)
             if len(self._sessions) >= self._max_sessions:

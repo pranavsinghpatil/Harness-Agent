@@ -245,22 +245,27 @@ def run_autonomous_investigation(payload: InvestigationPayload) -> Dict[str, Any
         current lifecycle state. Execution continues in the background.
 
     Raises:
-        HTTPException: 404 when the requested scenario is unknown.
+        HTTPException: 404 when the requested scenario is unknown; 503 when the
+            session store reaches capacity.
     """
     if not get_scenario(payload.scenario_id):
         raise HTTPException(status_code=404, detail=f"Scenario '{payload.scenario_id}' not found.")
 
-    session = default_investigation_store.create(
-        InvestigatorConfig(
-            objective=payload.objective,
-            hardware_preset_id=payload.hardware_preset_id,
-            scenario_id=payload.scenario_id,
-            controller_code=payload.controller_code,
-            seed=payload.seed,
-            budget=payload.budget,
-            max_boundary_steps=payload.max_boundary_steps,
+    try:
+        session: InvestigationSession = default_investigation_store.create(
+            InvestigatorConfig(
+                objective=payload.objective,
+                hardware_preset_id=payload.hardware_preset_id,
+                scenario_id=payload.scenario_id,
+                controller_code=payload.controller_code,
+                seed=payload.seed,
+                budget=payload.budget,
+                max_boundary_steps=payload.max_boundary_steps,
+            )
         )
-    )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
     default_investigation_store.start(session)
     return session.snapshot()
 
