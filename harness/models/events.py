@@ -10,6 +10,18 @@ import uuid
 
 class HarnessEventType(str, Enum):
     """Enumeration of all standard lifecycle and simulation event types."""
+    INVESTIGATION_CREATED = "INVESTIGATION_CREATED"
+    INVESTIGATION_STARTED = "INVESTIGATION_STARTED"
+    EXPERIMENT_PLANNED = "EXPERIMENT_PLANNED"
+    EXPERIMENT_STARTED = "EXPERIMENT_STARTED"
+    EXPERIMENT_COMPLETED = "EXPERIMENT_COMPLETED"
+    EVIDENCE_CAPTURED = "EVIDENCE_CAPTURED"
+    HYPOTHESIS_UPDATED = "HYPOTHESIS_UPDATED"
+    FALSIFICATION_PROPOSED = "FALSIFICATION_PROPOSED"
+    DECISION_RECORDED = "DECISION_RECORDED"
+    NEXT_EXPERIMENT_SELECTED = "NEXT_EXPERIMENT_SELECTED"
+    INVESTIGATION_COMPLETED = "INVESTIGATION_COMPLETED"
+    INVESTIGATION_FAILED = "INVESTIGATION_FAILED"
     SIMULATION_STARTED = "SIMULATION_STARTED"
     SIMULATION_STEP = "SIMULATION_STEP"
     SIMULATION_TERMINATED = "SIMULATION_TERMINATED"
@@ -70,6 +82,7 @@ class HarnessEvent:
     payload: Dict[str, Any] = field(default_factory=dict)
     event_id: str = field(default_factory=lambda: f"evt_{uuid.uuid4().hex[:8]}")
     wall_time: float = field(default_factory=time.time)
+    investigation_id: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize event to a plain dictionary for JSON/WebSocket streaming.
@@ -82,6 +95,7 @@ class HarnessEvent:
             "run_id": self.run_id,
             "episode_id": self.episode_id,
             "event_id": self.event_id,
+            "investigation_id": self.investigation_id,
             "sim_time": round(self.sim_time, 4),
             "wall_time": self.wall_time,
             "source": self.source,

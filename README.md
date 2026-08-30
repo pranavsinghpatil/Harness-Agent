@@ -149,3 +149,13 @@ fault values, telemetry, and evidence needed to reproduce that result.
 The `investigate_reliability` MCP tool returns the experiment history,
 provenance-backed evidence, competing hypotheses, falsification plans, and the
 decision trace so the agent's observable actions are inspectable end to end.
+
+### Persistent Investigation Sessions
+
+The HTTP investigation endpoint is asynchronous: `POST /api/harness/investigations`
+returns `202 Accepted` with an `investigation_id`. Read the current session from
+`GET /api/harness/investigations/{investigation_id}`, inspect its ordered event
+history at `/events`, or subscribe to
+`WS /ws/investigations/{investigation_id}` for replay plus live lifecycle events.
+This gives the frontend a stable session contract while System 2 continues
+executing deterministic System 1 experiments in the background.

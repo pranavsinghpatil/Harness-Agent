@@ -4,12 +4,48 @@ from __future__ import annotations
 import asyncio
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from harness.orchestration.investigation import InvestigationStatus, default_investigation_store
 from sandbox.api.environment import SandboxEnvironment
 from sandbox.api.tools import get_scenario, create_scenario
 from target_agents.reference_agent.agent import ReferenceAutonomousAgent
 
 
 router = APIRouter(tags=["websocket"])
+
+
+@router.websocket("/ws/investigations/{investigation_id}")
+async def websocket_investigation_stream(websocket: WebSocket, investigation_id: str) -> None:
+    """Stream an investigation's ordered lifecycle events until it reaches a terminal state."""
+    session = default_investigation_store.get(investigation_id)
+    if session is None:
+        await websocket.accept()
+        await websocket.send_json({"error": f"Investigation '{investigation_id}' not found"})
+        await websocket.close(code=4404)
+        return
+
+    await websocket.accept()
+    subscription = session.subscribe()
+    terminal_types = {"INVESTIGATION_COMPLETED", "INVESTIGATION_FAILED"}
+    try:
+        for event in subscription.events:
+            await websocket.send_json(event.to_dict())
+        if session.status in {InvestigationStatus.COMPLETED, InvestigationStatus.FAILED}:
+            return
+
+        while True:
+            try:
+                event = await asyncio.wait_for(
+                    asyncio.to_thread(subscription.queue.get), timeout=1.0
+                )
+            except asyncio.TimeoutError:
+                continue
+            await websocket.send_json(event.to_dict())
+            if event.type.value in terminal_types:
+                return
+    except WebSocketDisconnect:
+        pass
+    finally:
+        session.unsubscribe(subscription.queue)
 
 
 @router.websocket("/ws/live/{scenario_id}")
