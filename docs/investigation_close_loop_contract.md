@@ -35,10 +35,11 @@ returns `409`.
 
 ## Streaming events
 
-The canonical investigation WebSocket streams the approval and repair events:
+The canonical investigation WebSocket is the event contract for approval and
+repair events:
 `DIAGNOSIS_COMPLETED`, `PATCH_GENERATED`, `PATCH_APPROVAL_REQUESTED`,
 `PATCH_APPROVED`, `PATCH_REJECTED`, `VERIFICATION_PASSED`,
 `VERIFICATION_FAILED`, `REGRESSION_STARTED`, `REGRESSION_COMPLETED`, and
-`CONCLUSION_RECORDED`, along with all System 1 execution events. The stream
-waits asynchronously on the in-process subscription queue; it does not require
-Kafka, Redis, or a polling loop.
+`CONCLUSION_RECORDED`, along with all System 1 execution events. The separate
+PR #21 stream branch provides the event-loop-native delivery implementation;
+this close-loop branch only defines the events and session ownership.

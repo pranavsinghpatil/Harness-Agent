@@ -34,16 +34,7 @@ class CausalTelemetryAnalyzer:
         if not run.violations:
             runtime_failure: Optional[str] = cls._runtime_failure_reason(run)
             if runtime_failure:
-                return CausalDiagnosticReport(
-                    report_id=report_id,
-                    run_id=run.run_id,
-                    evaluation_id=run.evaluation_id,
-                    primary_root_cause=runtime_failure,
-                    markdown_summary=f"### Runtime failure\n{runtime_failure}",
-                    patch_recommendations=[
-                        "Repair the runtime or task-completion failure before safety certification."
-                    ],
-                )
+                return cls._runtime_failure_report(run, report_id, runtime_failure)
             return CausalDiagnosticReport(
                 report_id=report_id,
                 run_id=run.run_id,
@@ -76,6 +67,22 @@ class CausalTelemetryAnalyzer:
             contributing_fault_ids=contributing_faults,
             patch_recommendations=recommendations,
             markdown_summary=markdown_summary,
+        )
+
+    @staticmethod
+    def _runtime_failure_report(
+        run: HarnessRun, report_id: str, runtime_failure: str
+    ) -> CausalDiagnosticReport:
+        """Build the structured diagnostic for a violation-free failed run."""
+        return CausalDiagnosticReport(
+            report_id=report_id,
+            run_id=run.run_id,
+            evaluation_id=run.evaluation_id,
+            primary_root_cause=runtime_failure,
+            markdown_summary=f"### Runtime failure\n{runtime_failure}",
+            patch_recommendations=[
+                "Repair the runtime or task-completion failure before safety certification."
+            ],
         )
 
     @staticmethod

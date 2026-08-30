@@ -123,7 +123,7 @@ TrueForge operates as two tightly coupled, deterministic subsystems:
 
 ### WebSocket Streaming
 
-- **Investigation Stream (`/ws/investigations/{investigation_id}`):** Atomically replays prior event history upon connection, then streams live System 1 & System 2 events in real time, including diagnosis, patch approval, verification, regression, and conclusion events. Delivery waits on the in-process queue, so no Kafka or external broker is required.
+- **Investigation Stream (`/ws/investigations/{investigation_id}`):** Atomically replays prior event history upon connection, then streams live System 1 & System 2 events in real time, including diagnosis, patch approval, verification, regression, and conclusion events. The delivery implementation is tracked independently in PR #21 and remains broker-free.
 - **Live Frame Stream (`/ws/live`):** Broadcasts high-rate vehicle state, obstacle telemetry, sensor queues, and safety oracle statuses.
 
 ### Model Context Protocol (MCP) Server

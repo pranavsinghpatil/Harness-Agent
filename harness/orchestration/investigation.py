@@ -377,7 +377,14 @@ class InvestigationSession:
             self._complete_with_conclusion("PATCH_REJECTED", approval.reason)
             self._release_admission()
         else:
-            self._approval_future = self._executor.submit(self._verify_and_regress)
+            try:
+                approval_future: Future[None] = self._executor.submit(self._verify_and_regress)
+            except Exception as exc:
+                with self._lock:
+                    self._mark_failed_locked(f"{type(exc).__name__}: {exc}")
+                self._release_admission()
+                return self.snapshot()
+            self._approval_future = approval_future
         return self.snapshot()
 
     def _verify_and_regress(self) -> None:
@@ -419,7 +426,9 @@ class InvestigationSession:
             self._publish(HarnessEventType.REGRESSION_COMPLETED, {"cases": regression})
             outcome: str = (
                 "PROVEN_REPAIRED"
-                if regression and all(bool(case["passed"]) for case in regression)
+                if verification_passed
+                and regression
+                and all(bool(case["passed"]) for case in regression)
                 else "NOT_PROVEN_SAFE"
             )
             self._complete_with_conclusion(outcome, "Regression uses the retained deterministic experiment schedules.")
@@ -440,7 +449,8 @@ class InvestigationSession:
 
     def wait(self, timeout: Optional[float] = None) -> bool:
         """Wait for completion and return whether the worker has stopped."""
-        future: Optional[Future[None]] = self._future
+        with self._lock:
+            future: Optional[Future[None]] = self._approval_future or self._future
         if future is None:
             return self.status in {InvestigationStatus.COMPLETED, InvestigationStatus.FAILED}
         try:
