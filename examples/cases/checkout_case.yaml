@@ -1,0 +1,29 @@
+version: "1.0"
+id: "checkout-type-error"
+name: "Checkout Service TypeError on Missing Cart Total"
+description: "Checkout fails with TypeError when promo discount is applied but cart total attribute is undefined"
+source:
+  system: "autter_runtime"
+  reference: "commit-8f3c2a1"
+  metadata:
+    service: "checkout-api"
+    env: "production"
+environment:
+  seed: 42
+  runtime: "python3.11"
+execution:
+  command: "python -m examples.fixtures.payment_service"
+  timeout_seconds: 10.0
+perturbations:
+  discount_path: true
+  cart_total_present: false
+  timeout_ms: 500
+  latency_ms: 120
+expected:
+  outcome: "failure"
+  exit_code: 1
+  error_match: "TypeError: Cannot read properties of undefined"
+tags:
+  - "checkout"
+  - "backend"
+  - "autter-runtime"

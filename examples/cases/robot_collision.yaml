@@ -1,0 +1,28 @@
+version: "1.0"
+id: "stale-sensor-collision"
+name: "Navigation Collision under Sensor Latency and Brake Lag"
+description: "Simulated edge robot breaches safety margin when sensor staleness exceeds 180ms and brake delay exceeds 120ms"
+source:
+  system: "trueforge_sandbox"
+  reference: "seed-42"
+  metadata:
+    robot_model: "quadruped_v2"
+environment:
+  seed: 42
+  runtime: "python3.11"
+execution:
+  command: "python -m examples.fixtures.robot_nav_sim"
+  timeout_seconds: 10.0
+perturbations:
+  sensor_staleness: 240
+  brake_delay: 150
+  thermal_deg: 85
+  packet_loss: 0.12
+expected:
+  outcome: "failure"
+  exit_code: 1
+  error_match: "CollisionBreach"
+tags:
+  - "robotics"
+  - "simulation"
+  - "trueforge"

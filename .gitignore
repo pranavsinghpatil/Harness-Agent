@@ -44,3 +44,5 @@ env/
 # Binary / Document Assets
 *.pdf
 
+artifacts/
+*.egg-info/

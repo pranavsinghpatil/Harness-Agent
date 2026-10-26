@@ -1,0 +1,26 @@
+{
+  "incident_id": "autter-inc-7182",
+  "service": "checkout-order-api",
+  "commit": "8f3c2a1e94b2",
+  "occurrences": 142,
+  "trace_id": "0af7651916cd43dd8448eb211c80319c",
+  "error": {
+    "type": "RuntimeError",
+    "message": "Database pool connection timed out waiting for checkout transaction lock",
+    "stack": "RuntimeError: Database pool connection timed out\n  at acquireConnection (pool.ts:42)\n  at checkout (handler.ts:88)"
+  },
+  "request": {
+    "path": "/api/v1/orders/checkout",
+    "method": "POST",
+    "body": {
+      "cart_id": "cart_9921",
+      "user_id": "usr_44"
+    }
+  },
+  "telemetry_attributes": {
+    "db_query_timeout": true,
+    "latency_ms": 350,
+    "http.status_code": 500,
+    "pool.max_connections": 20
+  }
+}
