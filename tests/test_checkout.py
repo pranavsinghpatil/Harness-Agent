@@ -1,8 +1,14 @@
 """Unit tests for checkout order calculation and telemetry error paths."""
 
+import logging
+import os
 from unittest.mock import patch
 import pytest
-from services.checkout import calculate_order_total
+from services.checkout import (
+    calculate_order_total,
+    get_autter_otlp_endpoint,
+    report_autter_error,
+)
 
 
 def test_calculate_order_total_nominal():
@@ -47,3 +53,22 @@ def test_calculate_order_total_invalid_input_and_telemetry():
             calculate_order_total(valid_items, discount_code="BAD_CODE")
         assert mock_report.called
         assert "Invalid discount code" in mock_report.call_args[0][0]
+
+
+def test_telemetry_environment_and_error_handling(caplog):
+    # Missing env key skips cleanly
+    with patch.dict(os.environ, {}, clear=True):
+        assert get_autter_otlp_endpoint() is None
+        assert report_autter_error("test error") is False
+
+    # Configured key returns proper URL and logs warning on network error
+    with patch.dict(os.environ, {"AUTTER_INGEST_KEY": "sample_secret_key"}):
+        endpoint = get_autter_otlp_endpoint()
+        assert endpoint is not None
+        assert "key=sample_secret_key" in endpoint
+
+        with patch("urllib.request.urlopen", side_effect=OSError("Network failure")):
+            with caplog.at_level(logging.WARNING):
+                delivered = report_autter_error("test exception")
+                assert delivered is False
+                assert "Failed to deliver Autter runtime telemetry span" in caplog.text

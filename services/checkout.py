@@ -1,20 +1,34 @@
 """Checkout service with order calculation and Autter Runtime telemetry."""
 
 import json
+import logging
+import os
 import urllib.request
 from typing import Any
 
-AUTTER_OTLP_ENDPOINT = (
-    "https://otlp.autter.dev/v1/traces"
-    "?key=autter_rt_64a43069290be1d21d382ce68dcdc4c9a72dc140fa2027bb"
-)
+logger = logging.getLogger(__name__)
+
+OTLP_BASE_URL = "https://otlp.autter.dev/v1/traces"
+
+
+def get_autter_otlp_endpoint() -> str | None:
+    """Retrieve the Autter OTLP endpoint with key configured from environment."""
+    key = os.environ.get("AUTTER_INGEST_KEY", "").strip()
+    if not key:
+        return None
+    return f"{OTLP_BASE_URL}?key={key}"
 
 
 def report_autter_error(error_message: str, attributes: dict[str, Any] | None = None) -> bool:
     """Send an OTel error span to the Autter Runtime telemetry endpoint.
 
-    Gracefully handles network errors to prevent blocking local execution.
+    Gracefully logs transmission failures rather than silently swallowing errors.
     """
+    endpoint = get_autter_otlp_endpoint()
+    if not endpoint:
+        logger.debug("Skipping telemetry report: AUTTER_INGEST_KEY is not configured.")
+        return False
+
     attr_list = [
         {"key": "service.name", "value": {"stringValue": "checkout-service"}},
         {"key": "error.message", "value": {"stringValue": error_message}},
@@ -52,7 +66,7 @@ def report_autter_error(error_message: str, attributes: dict[str, Any] | None = 
     try:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            AUTTER_OTLP_ENDPOINT,
+            endpoint,
             data=data,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -60,8 +74,8 @@ def report_autter_error(error_message: str, attributes: dict[str, Any] | None = 
         with urllib.request.urlopen(req, timeout=1.5):
             pass
         return True
-    except Exception:
-        # Gracefully handle network unavailability in offline/test environments
+    except Exception as exc:
+        logger.warning("Failed to deliver Autter runtime telemetry span: %s", exc)
         return False
 
 
