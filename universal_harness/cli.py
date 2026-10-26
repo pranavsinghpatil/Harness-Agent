@@ -9,7 +9,7 @@ import sys
 from typing import List, Optional
 
 from universal_harness.case.loader import load_failure_case, save_failure_case
-from universal_harness.adapters.autter import import_autter_incident
+from universal_harness.adapters.autter import import_autter_incident, emit_autter_telemetry
 from universal_harness.evidence.report import EvidencePackager
 from universal_harness.replay.replayer import DeterministicReplayer
 from universal_harness.search.minimizer import FailureMinimizer
@@ -205,6 +205,36 @@ def handle_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_emit(args: argparse.Namespace) -> int:
+    case_path = Path(args.case)
+    if not case_path.exists():
+        sys.stderr.write(f"Error: FailureCase file '{case_path}' not found.\n")
+        return 1
+
+    case = load_failure_case(case_path)
+    print(f"\n[1/2] Loading FailureCase: {case.id}")
+    print(f"[2/2] Emitting telemetry event to Autter Runtime endpoint...")
+
+    result = emit_autter_telemetry(case, ingest_key=args.key, endpoint=args.endpoint)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0
+
+    print("\n" + "=" * 60)
+    status_mark = "[OK]" if result.get("success") else "[WARN]"
+    print(f"{status_mark} AUTTER TELEMETRY EMISSION: {result.get('status_code', 0)}")
+    print("=" * 60)
+    print(f"Target Endpoint: {result.get('endpoint')}")
+    print(f"Incident ID:     {result.get('incident_id')}")
+    if result.get("error"):
+        print(f"Response Info:   {result.get('error')}")
+    else:
+        print(f"Response:        Telemetry accepted by Autter collector")
+    print("=" * 60 + "\n")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="harness",
@@ -249,6 +279,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_imp.add_argument("--command", help="Target reproduction command")
     p_imp.add_argument("--out", help="Output YAML destination path")
     p_imp.set_defaults(func=handle_import)
+
+    # emit
+    p_emit = subparsers.add_parser("emit", help="Emit a FailureCase event to Autter Runtime telemetry endpoint")
+    p_emit.add_argument("case", help="Path to FailureCase YAML or JSON")
+    p_emit.add_argument("--key", help="Autter Runtime Ingest Key (default from AUTTER_INGEST_KEY)")
+    p_emit.add_argument("--endpoint", help="Autter Runtime ingest URL endpoint")
+    p_emit.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+    p_emit.set_defaults(func=handle_emit)
 
     return parser
 
